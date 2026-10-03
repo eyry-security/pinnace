@@ -54,7 +54,8 @@ as text (`error: ...`), never raised. Unknown tool names are reported the same w
 
 - `DockerSandbox(image="python:3.12-slim", workdir="/work", network=None, mem_limit="1g")`
   — one throwaway container per instance; `network="none"` cuts egress.
-- `LocalSandbox(workdir, unsafe_ok=False)` — host execution; requires `unsafe_ok=True`.
+- `LocalSandbox(workdir=None, unsafe_ok=False)` — host execution; requires `unsafe_ok=True`.
+  Workdir defaults to a fresh tempdir.
 - Both: `exec(cmd, timeout=120.0) -> ExecResult(stdout, stderr, exit_code, truncated)`,
   `read_file(path)`, `write_file(path, content)`, `close()`. Output capped at 200k chars.
   Paths are workdir-relative; `..` and absolute paths raise `SandboxError`.

@@ -90,8 +90,11 @@ FINISH_PREFIX = "__PINNACE_FINISH__"
 
 
 def parse_finish(tool_output: str):
-    """Pull the structured payload out of a finish() call. Returns None when the
-    output isn't a finish marker; returns the raw string if it isn't valid JSON."""
+    """Pull the structured payload out of a finish() call.
+
+    Returns None when the output isn't a finish marker. Otherwise returns the
+    parsed JSON payload, or {"result": raw_string} when it isn't valid JSON —
+    so callers always get a dict back (or None)."""
     if not tool_output.startswith(FINISH_PREFIX):
         return None
     raw = tool_output[len(FINISH_PREFIX):]

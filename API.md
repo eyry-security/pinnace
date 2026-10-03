@@ -49,6 +49,8 @@ result: AgentResult = agent.run("do the thing")
 `shell(command)`, `read_file(path)`, `write_file(path, content)`,
 `fetch_url(url)`, `finish(result_json)`. Tool failures are returned to the model
 as text (`error: ...`), never raised. Unknown tool names are reported the same way.
+`pinnace.tools.parse_finish(output)` extracts a finish payload: dict when the
+output is a finish marker (wrapping non-JSON in `{"result": ...}`), else None.
 
 ## Sandbox
 

@@ -15,6 +15,14 @@ def test_requires_unsafe_ok(tmp_path):
         LocalSandbox(str(tmp_path))
 
 
+def test_workdir_defaults_to_tmpdir():
+    sb = LocalSandbox(unsafe_ok=True)
+    import os
+
+    assert os.path.isdir(sb.workdir)
+    assert "pinnace-" in sb.workdir
+
+
 def test_exec_echo(sb):
     r = sb.exec("echo hello")
     assert r.exit_code == 0

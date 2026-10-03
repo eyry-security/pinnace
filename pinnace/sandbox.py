@@ -12,6 +12,7 @@ import os
 import shlex
 import subprocess
 import tarfile
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -164,13 +165,13 @@ class LocalSandbox(Sandbox):
     to prove you read this docstring.
     """
 
-    def __init__(self, workdir: str, unsafe_ok: bool = False) -> None:
+    def __init__(self, workdir: str | None = None, unsafe_ok: bool = False) -> None:
         if not unsafe_ok:
             raise SandboxError(
                 "LocalSandbox runs model-generated commands on your machine. "
                 "Pass unsafe_ok=True only for dev/tests."
             )
-        self.workdir = os.path.abspath(workdir)
+        self.workdir = os.path.abspath(workdir or tempfile.mkdtemp(prefix="pinnace-"))
         os.makedirs(self.workdir, exist_ok=True)
 
     def exec(self, cmd: str, timeout: float = 120.0) -> ExecResult:

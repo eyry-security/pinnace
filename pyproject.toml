@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pinnace"
+version = "0.1.0"
+description = "General multi-turn agent runtime with compaction, tools, and a Docker sandbox. The ship's boat of the Eyry suite."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Eyry", email = "hello@eyry.io" }]
+keywords = ["agent", "llm", "langgraph", "sandbox", "docker", "autonomous", "recon", "bugbounty"]
+dependencies = [
+    "langgraph>=1.0",
+    "langchain-core>=1.0",
+    "docker>=7.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["langchain>=1.0", "langchain-anthropic>=1.0"]
+openai = ["langchain>=1.0", "langchain-openai>=1.0"]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://eyry.io"
+Repository = "https://github.com/eyry-security/pinnace"
+
+[project.scripts]
+pinnace = "pinnace.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pinnace*"]

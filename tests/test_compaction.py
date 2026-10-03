@@ -1,0 +1,55 @@
+"""Compaction is pure logic — no model calls except the summarizer, which we fake."""
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+from pinnace.compaction import compact_messages, estimate_tokens, needs_compaction
+
+
+class FakeSummarizer:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, messages):
+        self.calls += 1
+        return AIMessage(content="SUMMARY: did stuff")
+
+
+def test_estimate_tokens_scales_with_content():
+    short = [HumanMessage(content="hi")]
+    long = [HumanMessage(content="x" * 4000)]
+    assert estimate_tokens(long) > estimate_tokens(short)
+    assert estimate_tokens(short) == len("hi") // 4
+
+
+def test_estimate_counts_tool_calls():
+    m = [AIMessage(content="", tool_calls=[
+        {"name": "shell", "args": {"command": "x" * 400}, "id": "1", "type": "tool_call"}
+    ])]
+    assert estimate_tokens(m) >= 100
+
+
+def test_needs_compaction_tripwire():
+    msgs = [HumanMessage(content="x" * 4000)]  # ~1000 tokens
+    assert needs_compaction(msgs, 500)
+    assert not needs_compaction(msgs, 5000)
+
+
+def test_compact_keeps_system_and_tail():
+    model = FakeSummarizer()
+    msgs = [SystemMessage(content="ORIGINAL SYSTEM")] + [
+        HumanMessage(content=f"old message {i} " + "y" * 500) for i in range(10)
+    ] + [HumanMessage(content="recent")]
+    out = compact_messages(model, msgs, keep_last=2)
+    assert model.calls == 1
+    assert isinstance(out[0], SystemMessage)
+    assert out[0].content == "ORIGINAL SYSTEM"
+    assert "SUMMARY" in out[1].content
+    assert out[-1].content == "recent"
+    assert out[-2].content.startswith("old message 9")
+
+
+def test_compact_noop_when_short():
+    model = FakeSummarizer()
+    msgs = [HumanMessage(content="hi")]
+    assert compact_messages(model, msgs) is msgs
+    assert model.calls == 0

@@ -39,6 +39,7 @@ class AgentConfig:
     session_store: SessionStore | None = None
     session_id: str | None = None
     log: Callable[[str], None] | None = None
+    prompt_caching: bool = True
 
     @classmethod
     def resolve(cls, model: Any = None, **values: Any) -> "AgentConfig":
@@ -61,5 +62,6 @@ class AgentConfig:
             "compaction_keep_last": self.compaction_keep_last,
             "session_store": self.session_store,
             "session_id": self.session_id,
+            "prompt_caching": self.prompt_caching,
             "log": self.log,
         }

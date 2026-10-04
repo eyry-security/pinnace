@@ -94,3 +94,73 @@ def test_session_persists_and_resumes(tmp_path):
     # Resumed transcript contains both user prompts.
     humans = [m for m in r2.transcript if m.get("id", [""])[-1] == "HumanMessage"]
     assert [m["kwargs"]["content"] for m in humans] == ["task one", "task two"]
+
+
+from langchain_core.messages import AIMessage, SystemMessage
+
+import pinnace.agent as agent_mod
+from pinnace.agent import _supports_prompt_caching
+from pinnace.config import AgentConfig
+
+
+def _cached_agent(tmp_path, **kw):
+    """Agent with prompt-caching support forced on (no API key needed)."""
+    orig = agent_mod._supports_prompt_caching
+    agent_mod._supports_prompt_caching = lambda m: True  # noqa: E731
+    try:
+        return _agent(tmp_path, [AIMessage(content="done")], **kw)
+    finally:
+        agent_mod._supports_prompt_caching = orig
+
+
+def test_system_message_plain_for_non_anthropic(tmp_path):
+    agent = _agent(tmp_path, [AIMessage(content="done")])
+    assert agent._cache_system is False
+    m = agent._system_message()
+    assert isinstance(m, SystemMessage)
+    assert isinstance(m.content, str)
+
+
+def test_system_message_cache_blocks_when_supported(tmp_path):
+    agent = _cached_agent(tmp_path)
+    assert agent._cache_system is True
+    m = agent._system_message()
+    assert isinstance(m.content, list)
+    block = m.content[0]
+    assert block["type"] == "text"
+    assert block["text"] == agent.system_prompt
+    assert block["cache_control"] == {"type": "ephemeral"}
+
+
+def test_prompt_caching_opt_out(tmp_path):
+    agent = _cached_agent(tmp_path, prompt_caching=False)
+    assert agent._cache_system is False
+    assert isinstance(agent._system_message().content, str)
+
+
+def test_run_emits_caching_log_line(tmp_path):
+    lines = []
+    agent = _cached_agent(tmp_path, log=lambda s: lines.append(s))
+    agent.run("hi")
+    assert any("prompt caching" in line for line in lines)
+
+
+def test_run_uses_cached_system_message_in_transcript(tmp_path):
+    agent = _cached_agent(tmp_path)
+    result = agent.run("hi")
+    first = result.transcript[0]
+    assert first["id"][-1] == "SystemMessage"
+    assert isinstance(first["kwargs"]["content"], list)
+
+
+def test_supports_prompt_caching_rejects_other_models():
+    class FakeModel:
+        pass
+
+    assert _supports_prompt_caching(FakeModel()) is False
+    assert _supports_prompt_caching(object()) is False
+
+
+def test_config_prompt_caching_roundtrip():
+    assert AgentConfig().to_kwargs()["prompt_caching"] is True
+    assert AgentConfig(prompt_caching=False).to_kwargs()["prompt_caching"] is False

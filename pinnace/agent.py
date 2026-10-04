@@ -47,6 +47,21 @@ def _make_model(model_ref: str):
     return init_chat_model(name, model_provider=provider)
 
 
+# Anthropic prompt-caching breakpoint. Applied to the system prompt — the
+# large static prefix of every request — so multi-turn runs pay cache-read
+# rates (~10% of input price) instead of full input price on repeated turns.
+CACHE_CONTROL_EPHEMERAL = {"type": "ephemeral"}
+
+
+def _supports_prompt_caching(model) -> bool:
+    """True for LangChain Anthropic chat models (cache_control blocks)."""
+    try:
+        from langchain_anthropic import ChatAnthropic
+    except ImportError:
+        return False
+    return isinstance(model, ChatAnthropic)
+
+
 @dataclass
 class AgentResult:
     """What a run produced."""
@@ -92,6 +107,8 @@ class PinnaceAgent:
         compaction_keep_last: recent messages kept verbatim when compacting.
         session_store / session_id: persist and resume transcripts.
         log: callable taking a string; turn-by-turn narration goes here.
+        prompt_caching: cache the system prompt via Anthropic prompt caching
+            (only when the model supports it; default on).
     """
 
     def __init__(
@@ -106,6 +123,7 @@ class PinnaceAgent:
         session_store: SessionStore | None = None,
         session_id: str | None = None,
         log=None,
+        prompt_caching: bool = True,
     ) -> None:
         if model is None:
             model = AgentConfig.resolve().model
@@ -128,6 +146,8 @@ class PinnaceAgent:
         self.session_store = session_store or SessionStore()
         self.session_id = session_id
         self.log = log or (lambda *a: None)
+        self.prompt_caching = prompt_caching
+        self._cache_system = prompt_caching and _supports_prompt_caching(self.model)
 
     @classmethod
     def from_config(cls, config: AgentConfig) -> "PinnaceAgent":
@@ -137,18 +157,29 @@ class PinnaceAgent:
     def _say(self, msg: str) -> None:
         self.log(msg)
 
+    def _system_message(self) -> SystemMessage:
+        """System prompt, with a prompt-caching breakpoint when supported."""
+        if self._cache_system:
+            return SystemMessage(content=[
+                {"type": "text", "text": self.system_prompt,
+                 "cache_control": dict(CACHE_CONTROL_EPHEMERAL)},
+            ])
+        return SystemMessage(content=self.system_prompt)
+
     def run(self, prompt: str) -> AgentResult:
         messages: list[BaseMessage] = []
         if self.system_prompt:
-            messages.append(SystemMessage(content=self.system_prompt))
+            messages.append(self._system_message())
         if self.session_id:
             history = self.session_store.load(self.session_id)
             if history:
                 # History already carries its own system prompt; don't double it.
                 messages = [m for m in history if not isinstance(m, SystemMessage)]
                 if self.system_prompt:
-                    messages.insert(0, SystemMessage(content=self.system_prompt))
+                    messages.insert(0, self._system_message())
                 self._say(f"[pinnace] resumed session {self.session_id!r} ({len(history)} messages)")
+        if self._cache_system:
+            self._say("[pinnace] prompt caching on (system prompt)")
         messages.append(HumanMessage(content=prompt))
 
         turns = 0

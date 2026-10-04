@@ -106,6 +106,21 @@ def _model_reference(model) -> str | None:
     return None
 
 
+# Anthropic prompt-caching breakpoint. Applied to the system prompt — the
+# large static prefix of every request — so multi-turn runs pay cache-read
+# rates (~10% of input price) instead of full input price on repeated turns.
+CACHE_CONTROL_EPHEMERAL = {"type": "ephemeral"}
+
+
+def _supports_prompt_caching(model) -> bool:
+    """True for LangChain Anthropic chat models (cache_control blocks)."""
+    try:
+        from langchain_anthropic import ChatAnthropic
+    except ImportError:
+        return False
+    return isinstance(model, ChatAnthropic)
+
+
 @dataclass
 class AgentResult:
     """What a run produced."""
@@ -182,12 +197,15 @@ class PinnaceAgent:
         agent_id: str | None = None,
         customer_id: str | None = None,
         thinking: bool = False,
+        prompt_caching: bool = True,
     ) -> None:
         if model is None:
             model = AgentConfig.resolve().model
         self.model_ref = _model_reference(model)
         self.thinking = thinking
         self.model = _make_model(model, thinking=thinking) if isinstance(model, str) else model
+        self.prompt_caching = prompt_caching
+        self._cache_system = prompt_caching and _supports_prompt_caching(self.model)
         if sandbox is None:
             try:
                 sandbox = DockerSandbox()
@@ -199,6 +217,8 @@ class PinnaceAgent:
         self.tools = builtin_tools(sandbox) + list(tools or [])
         self._tools_by_name = {t.name: t for t in self.tools}
         self.bound = self.model.bind_tools(self.tools)
+        if self._cache_system:
+            self._add_tools_cache_breakpoint()
         self.system_prompt = system_prompt
         self.max_turns = max_turns
         self.compaction_tokens = compaction_tokens
@@ -223,6 +243,27 @@ class PinnaceAgent:
 
     def _say(self, msg: str) -> None:
         self.log(msg)
+
+    def _system_message(self):
+        """System prompt, with a prompt-caching breakpoint when supported."""
+        if self._cache_system:
+            return SystemMessage(content=[
+                {"type": "text", "text": self.system_prompt,
+                 "cache_control": dict(CACHE_CONTROL_EPHEMERAL)},
+            ])
+        return SystemMessage(content=self.system_prompt)
+
+    def _add_tools_cache_breakpoint(self) -> None:
+        """Mark the last bound tool definition cacheable (Anthropic)."""
+        bound_kwargs = getattr(self.bound, "kwargs", None)
+        if not isinstance(bound_kwargs, dict):
+            return
+        tools = bound_kwargs.get("tools")
+        if not tools:
+            return
+        last = tools[-1]
+        if isinstance(last, dict):
+            last["cache_control"] = dict(CACHE_CONTROL_EPHEMERAL)
 
     def _record_usage(
         self,
@@ -254,15 +295,17 @@ class PinnaceAgent:
     def run(self, prompt: str) -> AgentResult:
         messages: list[BaseMessage] = []
         if self.system_prompt:
-            messages.append(SystemMessage(content=self.system_prompt))
+            messages.append(self._system_message())
         if self.session_id:
             history = self.session_store.load(self.session_id)
             if history:
                 # History already carries its own system prompt; don't double it.
                 messages = [m for m in history if not isinstance(m, SystemMessage)]
                 if self.system_prompt:
-                    messages.insert(0, SystemMessage(content=self.system_prompt))
+                    messages.insert(0, self._system_message())
                 self._say(f"[pinnace] resumed session {self.session_id!r} ({len(history)} messages)")
+        if self._cache_system:
+            self._say("[pinnace] prompt caching on (system prompt)")
         messages.append(HumanMessage(content=prompt))
 
         turns = 0

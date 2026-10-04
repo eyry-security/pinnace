@@ -7,10 +7,13 @@ from langchain_core.messages import AIMessage
 from pinnace.agent import (
     PinnaceAgent,
     _make_model,
+    _supports_prompt_caching,
     extract_thinking,
 )
+from pinnace.config import AgentConfig
 from pinnace.sandbox import LocalSandbox
 from pinnace.session import SessionStore
+import pinnace.agent as agent_mod
 
 
 def _tc(name, args, i):
@@ -234,3 +237,102 @@ def test_make_model_thinking_ignored_for_other_providers(monkeypatch):
     seen = _patched_init(monkeypatch)
     _make_model("openai:gpt-5", thinking=True)
     assert "thinking" not in seen["kwargs"]
+def _cached_agent(tmp_path, **kw):
+    """Agent with prompt-caching support forced on (no API key needed)."""
+    orig = agent_mod._supports_prompt_caching
+    agent_mod._supports_prompt_caching = lambda m: True
+    try:
+        return _agent(tmp_path, [AIMessage(content="done")], **kw)
+    finally:
+        agent_mod._supports_prompt_caching = orig
+
+
+def test_system_message_cache_blocks_when_supported(tmp_path):
+    agent = _cached_agent(tmp_path)
+    assert agent._cache_system is True
+    m = agent._system_message()
+    assert isinstance(m.content, list)
+    block = m.content[0]
+    assert block["type"] == "text"
+    assert block["text"] == agent.system_prompt
+    assert block["cache_control"] == {"type": "ephemeral"}
+
+
+def test_prompt_caching_opt_out(tmp_path):
+    agent = _cached_agent(tmp_path, prompt_caching=False)
+    assert agent._cache_system is False
+    assert isinstance(agent._system_message().content, str)
+
+
+def test_run_emits_caching_log_line(tmp_path):
+    lines = []
+    agent = _cached_agent(tmp_path)
+    agent.log = lambda s: lines.append(s)
+    agent.run("hi")
+    assert any("prompt caching" in line for line in lines)
+
+
+def test_run_uses_cached_system_message_in_transcript(tmp_path):
+    agent = _cached_agent(tmp_path)
+    result = agent.run("hi")
+    first = result.transcript[0]
+    assert first["id"][-1] == "SystemMessage"
+    assert isinstance(first["kwargs"]["content"], list)
+
+
+def test_supports_prompt_caching_rejects_other_models():
+    class FakeModel:
+        pass
+
+    assert _supports_prompt_caching(FakeModel()) is False
+    assert _supports_prompt_caching(object()) is False
+
+
+def test_config_prompt_caching_roundtrip():
+    assert AgentConfig().to_kwargs()["prompt_caching"] is True
+    assert AgentConfig(prompt_caching=False).to_kwargs()["prompt_caching"] is False
+
+
+def test_tools_cache_breakpoint_on_last_tool(tmp_path):
+    """The last bound tool definition carries the cache breakpoint."""
+    from langchain_anthropic import ChatAnthropic
+
+    from pinnace.sandbox import LocalSandbox
+    from pinnace.session import SessionStore
+
+    agent = PinnaceAgent(
+        model=ChatAnthropic(model="claude-opus-4-6"),
+        sandbox=LocalSandbox(str(tmp_path / "work"), unsafe_ok=True),
+        session_store=SessionStore(tmp_path / "sessions"),
+        log=lambda *a: None,
+    )
+    assert agent._cache_system is True
+    tools = agent.bound.kwargs["tools"]
+    assert len(tools) == 6
+    assert tools[-1]["cache_control"] == {"type": "ephemeral"}
+    assert all("cache_control" not in t for t in tools[:-1])
+
+
+def test_tools_cache_breakpoint_opt_out(tmp_path):
+    from langchain_anthropic import ChatAnthropic
+
+    from pinnace.sandbox import LocalSandbox
+    from pinnace.session import SessionStore
+
+    agent = PinnaceAgent(
+        model=ChatAnthropic(model="claude-opus-4-6"),
+        sandbox=LocalSandbox(str(tmp_path / "work"), unsafe_ok=True),
+        session_store=SessionStore(tmp_path / "sessions"),
+        log=lambda *a: None,
+        prompt_caching=False,
+    )
+    tools = agent.bound.kwargs["tools"]
+    assert all("cache_control" not in t for t in tools)
+
+
+def test_tools_cache_breakpoint_noop_for_fake_model(tmp_path):
+    """Non-Anthropic models: no breakpoint, no crash."""
+    agent = _agent(tmp_path, [AIMessage(content="done")])
+    assert agent._cache_system is False
+    tools = getattr(getattr(agent, "bound", None), "kwargs", {}).get("tools", [])
+    assert all("cache_control" not in t for t in tools)

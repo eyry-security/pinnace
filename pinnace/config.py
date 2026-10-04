@@ -45,6 +45,7 @@ class AgentConfig:
     agent_id: str | None = None
     customer_id: str | None = None
     thinking: bool = False
+    prompt_caching: bool = True
 
     @classmethod
     def resolve(cls, model: Any = None, **values: Any) -> "AgentConfig":
@@ -73,4 +74,5 @@ class AgentConfig:
             "agent_id": self.agent_id,
             "customer_id": self.customer_id,
             "thinking": self.thinking,
+            "prompt_caching": self.prompt_caching,
         }

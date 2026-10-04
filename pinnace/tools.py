@@ -25,8 +25,9 @@ def _format_exec(cmd: str, r) -> str:
 
 
 def builtin_tools(sandbox: Sandbox) -> list[BaseTool]:
-    """The default toolset: shell, read/write files in the sandbox, fetch a URL,
-    and finish (end the run with a structured result)."""
+    """The default toolset: shell, read/write files in the sandbox, a Python
+    scratchpad for ad-hoc analysis, fetch a URL, and finish (end the run with
+    a structured result)."""
 
     def shell(command: str) -> str:
         """Run a shell command inside the sandbox and return its output.
@@ -66,6 +67,20 @@ def builtin_tools(sandbox: Sandbox) -> list[BaseTool]:
             body = body[:_FETCH_MAX_CHARS] + "\n…[truncated]"
         return body
 
+    def python_scratchpad(code: str) -> str:
+        """Run Python code inside the sandbox and return its output.
+
+        Use for custom analysis, data munging, or quick calculations during a
+        run — parsing tool output, scoring candidates, transforming data —
+        instead of wrestling with bash one-liners. The code is written to
+        _scratchpad.py in the sandbox workdir and executed with python3.
+        Stdlib only: no pip installs, no network guarantees."""
+        try:
+            sandbox.write_file("_scratchpad.py", code)
+        except Exception as e:  # noqa: BLE001 - surface it to the model
+            return f"error: {e}"
+        return _format_exec("python3 _scratchpad.py", sandbox.exec("python3 _scratchpad.py"))
+
     def finish(result: str) -> str:
         """End the run with a structured result. Pass a JSON object as a string,
         e.g. '{"verdict": "vulnerable", "notes": "..."}'. Call this when the job
@@ -79,6 +94,8 @@ def builtin_tools(sandbox: Sandbox) -> list[BaseTool]:
             description="Read a file from the sandbox workdir (relative path)."),
         StructuredTool.from_function(write_file, name="write_file",
             description="Write a file into the sandbox workdir (relative path). Creates parent dirs."),
+        StructuredTool.from_function(python_scratchpad, name="python_scratchpad",
+            description="Run Python code (stdlib only) in the sandbox. Returns stdout, stderr, exit code."),
         StructuredTool.from_function(fetch_url, name="fetch_url",
             description="GET a URL and return the body as text. Plain GET, no JS."),
         StructuredTool.from_function(finish, name="finish",

@@ -44,7 +44,37 @@ def _make_model(model_ref: str):
         raise PinnaceError(
             f"bad model ref {model_ref!r}: want 'provider:model', e.g. 'anthropic:claude-opus-4-6'"
         )
+    if provider == "do":
+        return _make_do_model(name)
     return init_chat_model(name, model_provider=provider)
+
+
+def _make_do_model(name: str):
+    """Build a chat model via DigitalOcean's OpenAI-compatible inference API.
+
+    Model ref: ``do:anthropic-claude-opus-4.6`` (DO catalog model ID).
+    Needs the ``DO_INFERENCE_KEY`` env var set to a DO Model Access Key.
+    """
+    import os
+
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as e:
+        raise PinnaceError(
+            "the 'do' provider needs the 'langchain-openai' package, "
+            "e.g. pip install 'pinnace[openai]'."
+        ) from e
+    api_key = os.environ.get("DO_INFERENCE_KEY")
+    if not api_key:
+        raise PinnaceError(
+            "provider 'do' needs the DO_INFERENCE_KEY env var set to a "
+            "DigitalOcean Model Access Key."
+        )
+    return ChatOpenAI(
+        model=name,
+        base_url="https://inference.do-ai.run/v1",
+        api_key=api_key,
+    )
 
 
 @dataclass

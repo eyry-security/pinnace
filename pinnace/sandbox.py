@@ -112,9 +112,11 @@ class DockerSandbox(Sandbox):
             code, out = self._container.exec_run(wrapped, demux=True)
         except Exception as e:
             raise SandboxError(f"exec failed: {e}") from e
-        stdout_b, stderr_b = out or (b"", b"")
-        stdout, t1 = _truncate(stdout_b.decode("utf-8", "replace"))
-        stderr, t2 = _truncate(stderr_b.decode("utf-8", "replace"))
+        # demux=True yields (stdout|None, stderr|None); either stream — or the
+        # whole pair — may be None when empty. Normalize before decoding.
+        stdout_b, stderr_b = out or (None, None)
+        stdout, t1 = _truncate((stdout_b or b"").decode("utf-8", "replace"))
+        stderr, t2 = _truncate((stderr_b or b"").decode("utf-8", "replace"))
         return ExecResult(stdout, stderr, code, truncated=t1 or t2)
 
     def _tar_for(self, rel: str, content: bytes) -> io.BytesIO:

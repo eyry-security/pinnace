@@ -60,3 +60,36 @@ def test_output_truncated(sb):
     r = sb.exec("python3 -c \"print('x' * 300000)\"")
     assert r.truncated
     assert len(r.stdout) < 300000
+
+
+def _docker_sb(out):
+    """DockerSandbox with a fake container returning a canned demux pair."""
+    from pinnace.sandbox import DockerSandbox
+
+    class FakeContainer:
+        def exec_run(self, *a, **k):
+            return 0, out
+
+    sb = DockerSandbox.__new__(DockerSandbox)
+    sb._container = FakeContainer()
+    return sb
+
+
+def test_docker_exec_none_streams():
+    """Regression: demux=True returns None for empty streams (or no output).
+
+    Previously crashed with 'NoneType' object has no attribute 'decode',
+    breaking every shell call in the Docker sandbox.
+    """
+    for out in [(b"hello\n", None), (None, b"oops\n"), (None, None), None]:
+        r = _docker_sb(out).exec("echo hello")
+        assert r.exit_code == 0
+
+
+def test_docker_exec_none_stream_values():
+    r = _docker_sb((b"hello\n", None)).exec("echo hello")
+    assert r.stdout.strip() == "hello"
+    assert r.stderr == ""
+    r = _docker_sb((None, b"oops\n")).exec("echo hello")
+    assert r.stdout == ""
+    assert r.stderr.strip() == "oops"

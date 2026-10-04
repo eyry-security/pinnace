@@ -53,3 +53,57 @@ def test_compact_noop_when_short():
     msgs = [HumanMessage(content="hi")]
     assert compact_messages(model, msgs) is msgs
     assert model.calls == 0
+
+
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from pinnace.compaction_controls import (
+    CompactionConfig,
+    compact_with_config,
+)
+
+
+class _EchoModel:
+    def invoke(self, messages):
+        m = HumanMessage(content="summary of stuff")
+        return m
+
+
+def test_no_compaction_below_tripwire():
+    msgs = [SystemMessage(content="sys"), HumanMessage(content="hi")]
+    out, report = compact_with_config(_EchoModel(), msgs)
+    assert out == msgs
+    assert report is None
+
+
+def test_compaction_report():
+    cfg = CompactionConfig(max_tokens=10, keep_last=1)
+    msgs = [SystemMessage(content="sys")] + [HumanMessage(content="x" * 100) for _ in range(5)]
+    out, report = compact_with_config(_EchoModel(), msgs, cfg)
+    assert report is not None
+    assert report.messages_summarized == 4
+    assert report.tokens_before > report.tokens_after
+    assert "compacted 4 messages" in report.one_liner()
+    # head kept, summary inserted, tail kept
+    assert isinstance(out[0], SystemMessage) and out[0].content == "sys"
+    assert "compacted" in out[1].content
+    assert len(out) == 3  # head + summary + 1 tail
+
+
+def test_custom_summarize_prompt():
+    seen = {}
+
+    class SpyModel:
+        def invoke(self, messages):
+            seen["prompt"] = messages[0].content
+            return HumanMessage(content="s")
+
+    cfg = CompactionConfig(max_tokens=1, keep_last=0, summarize_prompt="CUSTOM")
+    compact_with_config(SpyModel(), [HumanMessage(content="y" * 100)], cfg)
+    assert seen["prompt"] == "CUSTOM"
+
+
+def test_config_defaults_match_legacy():
+    cfg = CompactionConfig()
+    assert cfg.max_tokens == 100_000
+    assert cfg.keep_last == 8

@@ -110,9 +110,18 @@ pinnace run --prompt TEXT | --prompt-file FILE [--model provider:model]
     [--max-turns N] [--sandbox docker|local] [--image IMG] [--no-net]
     [--session NAME] [--agent-id ID] [--customer-id ID] [--usage-log PATH]
     [--json] [--quiet]
+pinnace compact SESSION [--root DIR] [--model provider:model] [--keep-last N]
+    [--summarize-prompt-file FILE] [--agent-id ID] [--customer-id ID]
+    [--usage-log PATH] [--json]
 pinnace sessions [--root DIR]
 pinnace tools
 ```
+
+`pinnace compact` is the manual compaction trigger for a persisted session. It
+bypasses the automatic token tripwire, retains the requested tail, replaces the
+transcript only after a successful summary, and prints the same before/after estimate and message counts exposed by `CompactionReport`. The
+summarizer call is recorded by the exact usage meter. Sessions with no messages
+before the retained tail are reported as no-ops without constructing a model.
 
 Interactive CLI narration is written to stderr with TTY-aware color and
 progress markers for turns, tool calls, compaction, sessions, completion, and

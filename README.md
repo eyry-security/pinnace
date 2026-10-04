@@ -62,8 +62,9 @@ pinnace run --prompt "audit this repo" \
 # no docker on this box (dev only — runs model-generated commands on YOUR machine)
 pinnace run --prompt "list files" --sandbox local --unsafe-ok
 
-# list saved sessions and built-in tools
+# list saved sessions, manually compact one, and inspect built-in tools
 pinnace sessions
+pinnace compact recon-1 --keep-last 8
 pinnace tools
 ```
 
@@ -90,7 +91,7 @@ Each turn: estimate context size → compact if over the tripwire → call the m
 
 **Compaction** summarizes everything except the last `compaction_keep_last` (default 8) messages into one system message, keeping the original system prompt verbatim. The tripwire is a rough chars/4 estimate — it just needs to fire before the real window does.
 
-**Sessions** are JSONL transcripts on disk. Pass `--session <name>` (or `session_id=` in the API) and the transcript persists; run again with the same name and the agent picks up where it left off.
+**Sessions** are JSONL transcripts on disk. Pass `--session <name>` (or `session_id=` in the API) and the transcript persists; run again with the same name and the agent picks up where it left off. `pinnace compact <name>` manually compacts a saved transcript regardless of the automatic token tripwire, while preserving the requested recent tail and reporting before/after estimates. A failed summary leaves the original transcript unchanged.
 
 **Usage metering** appends one schema-versioned JSON record for every model call,
 including compaction, to `$PINNACE_USAGE_LOG` or `~/.pinnace/usage.jsonl`.
@@ -110,6 +111,9 @@ pinnace run --prompt TEXT | --prompt-file FILE [--model provider:model]
     [--sandbox docker|local] [--image IMG] [--no-net] [--workdir DIR]
     [--unsafe-ok] [--session NAME] [--agent-id ID] [--customer-id ID]
     [--usage-log PATH] [--json] [--quiet]
+pinnace compact SESSION [--root DIR] [--model provider:model] [--keep-last N]
+    [--summarize-prompt-file FILE] [--agent-id ID] [--customer-id ID]
+    [--usage-log PATH] [--json]
 pinnace sessions [--root DIR]
 pinnace tools
 ```

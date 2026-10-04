@@ -11,10 +11,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
+from langchain_core.messages import SystemMessage
+
 from . import __version__
-from .agent import PinnaceAgent, PinnaceError
+from .agent import PinnaceAgent, PinnaceError, _make_model
+from .compaction import SUMMARIZE_PROMPT
+from .compaction_controls import CompactionConfig, compact_with_config
 from .config import AgentConfig, DEFAULT_MODEL
 from .prompts import (
     DEFAULT_PROMPT_PACK_ID,
@@ -27,7 +32,7 @@ from .sandbox import DockerSandbox, LocalSandbox, SandboxError
 from .session import SessionStore
 from .tools import builtin_tools
 from .terminal import TerminalRenderer
-from .usage import UsageMeter
+from .usage import UsageMeter, response_model
 
 
 def _log(msg: str) -> None:
@@ -46,6 +51,16 @@ def _make_sandbox(args):
     except SandboxError as e:
         _log(f"error: {e}")
         raise SystemExit(1)
+
+
+def _non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError("must be an integer") from e
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -100,6 +115,24 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("prompts", help="list or inspect versioned prompt packs")
     sp.add_argument("--pack", help="show one prompt pack in full")
     sp.add_argument("--json", action="store_true", help="emit the selected pack as JSON")
+
+    sp = sub.add_parser("compact", help="manually compact a saved session")
+    sp.add_argument("session", help="saved session name")
+    sp.add_argument("--root", default=None,
+                    help="session store root (default: $PINNACE_HOME or ~/.pinnace)")
+    sp.add_argument("--model", default=None,
+                    help=f"summarizer provider:model (default: $PINNACE_MODEL or {DEFAULT_MODEL})")
+    sp.add_argument("--keep-last", type=_non_negative_int, default=8,
+                    help="recent messages to retain verbatim (default: 8)")
+    sp.add_argument("--summarize-prompt-file",
+                    help="UTF-8 file replacing the compaction prompt")
+    sp.add_argument("--agent-id", default=None,
+                    help="usage attribution (default: $PINNACE_AGENT_ID or session name)")
+    sp.add_argument("--customer-id", default=None,
+                    help="optional usage attribution (default: $PINNACE_CUSTOMER_ID)")
+    sp.add_argument("--usage-log", default=None,
+                    help="append-only usage JSONL (default: $PINNACE_USAGE_LOG or ~/.pinnace/usage.jsonl)")
+    sp.add_argument("--json", action="store_true", help="emit the compaction report as JSON")
 
     sp = sub.add_parser("sessions", help="list saved sessions")
     sp.add_argument("--root", default=None, help="session store root (default: $PINNACE_HOME or ~/.pinnace)")
@@ -183,6 +216,97 @@ def cmd_prompts(args) -> int:
     return 0
 
 
+def cmd_compact(args) -> int:
+    store = SessionStore(args.root)
+    messages = store.load(args.session)
+    if messages is None:
+        _log(f"error: session {args.session!r} not found")
+        return 1
+
+    body_start = 1 if messages and isinstance(messages[0], SystemMessage) else 0
+    messages_summarizable = max(0, len(messages) - body_start - args.keep_last)
+    if messages_summarizable == 0:
+        payload = {
+            "session_id": args.session,
+            "compacted": False,
+            "message_count": len(messages),
+            "keep_last": args.keep_last,
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(
+                f"session {args.session!r}: nothing to compact "
+                f"({len(messages)} messages, keeping {args.keep_last})"
+            )
+        return 0
+
+    summarize_prompt = SUMMARIZE_PROMPT
+    if args.summarize_prompt_file:
+        try:
+            with open(args.summarize_prompt_file, encoding="utf-8") as f:
+                summarize_prompt = f.read()
+        except (OSError, UnicodeError) as e:
+            _log(f"error: cannot read compaction prompt: {e}")
+            return 2
+
+    model_ref = AgentConfig.resolve(model=args.model).model
+    try:
+        model = _make_model(model_ref)
+    except PinnaceError as e:
+        _log(f"error: {e}")
+        return 1
+
+    meter = UsageMeter(args.usage_log)
+    usage_records: list[dict] = []
+
+    def record_usage(response) -> None:
+        usage_records.append(meter.record(
+            response,
+            model=response_model(response, model_ref),
+            model_ref=model_ref,
+            call_kind="compaction",
+            agent_id=(args.agent_id or os.environ.get("PINNACE_AGENT_ID") or args.session),
+            customer_id=(args.customer_id or os.environ.get("PINNACE_CUSTOMER_ID")),
+            session_id=args.session,
+        ))
+
+    config = CompactionConfig(
+        max_tokens=0,
+        keep_last=args.keep_last,
+        summarize_prompt=summarize_prompt,
+    )
+    try:
+        compacted, report = compact_with_config(
+            model,
+            messages,
+            config,
+            force=True,
+            on_response=record_usage,
+        )
+        if report is None:  # Defensive: candidate count above should prevent this.
+            _log(f"error: session {args.session!r} could not be compacted")
+            return 1
+        path = store.save(args.session, compacted)
+    except Exception as e:  # noqa: BLE001 - summary/meter failures leave the session unchanged
+        _log(f"error: compaction failed: {e}")
+        return 1
+
+    payload = {
+        "session_id": args.session,
+        "compacted": True,
+        **report.to_dict(),
+        "message_count_after": len(compacted),
+        "path": str(path),
+        "usage": usage_records,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"session {args.session!r}: {report.one_liner()}; saved to {path}")
+    return 0
+
+
 def cmd_sessions(args) -> int:
     store = SessionStore(args.root)
     for s in store.list():
@@ -206,6 +330,7 @@ def cmd_tools(args) -> int:
 _DISPATCH = {
     "run": cmd_run,
     "prompts": cmd_prompts,
+    "compact": cmd_compact,
     "sessions": cmd_sessions,
     "tools": cmd_tools,
 }

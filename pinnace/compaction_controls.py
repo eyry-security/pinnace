@@ -33,6 +33,12 @@ class CompactionConfig:
     summarize_prompt: str = SUMMARIZE_PROMPT
     """Instruction given to the summarizer model."""
 
+    def __post_init__(self) -> None:
+        if self.max_tokens < 0:
+            raise ValueError("max_tokens must be non-negative")
+        if self.keep_last < 0:
+            raise ValueError("keep_last must be non-negative")
+
 
 @dataclass
 class CompactionReport:
@@ -49,31 +55,48 @@ class CompactionReport:
             f"({self.tokens_before}→{self.tokens_after} est. tokens)"
         )
 
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "messages_summarized": self.messages_summarized,
+            "tokens_before": self.tokens_before,
+            "tokens_after": self.tokens_after,
+            "summary_chars": self.summary_chars,
+        }
+
 
 def compact_with_config(
     model,
     messages: list[BaseMessage],
     config: CompactionConfig | None = None,
+    *,
+    force: bool = False,
+    on_response=None,
 ) -> tuple[list[BaseMessage], CompactionReport | None]:
-    """Compact like compact_messages, but configurable and reporting.
+    """Compact context with configurable controls and a transparent report.
 
-    Returns (messages, report). Report is None when nothing needed compacting
-    (message list returned unchanged).
+    ``force=True`` bypasses the token tripwire for an explicit manual trigger.
+    The operation remains a no-op when no messages precede the retained tail.
+    ``on_response`` observes the raw summarizer response (for usage metering).
     """
     cfg = config or CompactionConfig()
     before = estimate_tokens(messages)
-    if not needs_compaction(messages, cfg.max_tokens):
+    if not messages or (not force and not needs_compaction(messages, cfg.max_tokens)):
         return messages, None
 
     head = messages[0] if isinstance(messages[0], SystemMessage) else None
     body_start = 1 if head else 0
     keep = cfg.keep_last
     to_summarize = messages[body_start:-keep] if keep else messages[body_start:]
+    if not to_summarize:
+        return messages, None
     tail = messages[-keep:] if keep else []
 
-    summary = model.invoke(
+    response = model.invoke(
         [SystemMessage(content=cfg.summarize_prompt), *to_summarize]
-    ).content
+    )
+    if on_response is not None:
+        on_response(response)
+    summary = response.content
     if not isinstance(summary, str):
         summary = str(summary)
 

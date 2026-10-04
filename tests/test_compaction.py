@@ -107,3 +107,36 @@ def test_config_defaults_match_legacy():
     cfg = CompactionConfig()
     assert cfg.max_tokens == 100_000
     assert cfg.keep_last == 8
+
+
+def test_force_compaction_bypasses_tripwire_and_observes_response():
+    model = _EchoModel()
+    cfg = CompactionConfig(max_tokens=1_000_000, keep_last=1)
+    msgs = [HumanMessage(content="old"), HumanMessage(content="recent")]
+    observed = []
+
+    unchanged, report = compact_with_config(model, msgs, cfg)
+    assert unchanged is msgs
+    assert report is None
+
+    out, report = compact_with_config(
+        model,
+        msgs,
+        cfg,
+        force=True,
+        on_response=observed.append,
+    )
+    assert report is not None
+    assert report.messages_summarized == 1
+    assert len(observed) == 1
+    assert out[-1].content == "recent"
+    assert report.to_dict()["summary_chars"] == len("summary of stuff")
+
+
+def test_compaction_config_rejects_negative_limits():
+    import pytest
+
+    with pytest.raises(ValueError, match="max_tokens"):
+        CompactionConfig(max_tokens=-1)
+    with pytest.raises(ValueError, match="keep_last"):
+        CompactionConfig(keep_last=-1)

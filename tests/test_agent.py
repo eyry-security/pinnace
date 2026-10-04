@@ -140,7 +140,8 @@ def test_prompt_caching_opt_out(tmp_path):
 
 def test_run_emits_caching_log_line(tmp_path):
     lines = []
-    agent = _cached_agent(tmp_path, log=lambda s: lines.append(s))
+    agent = _cached_agent(tmp_path)
+    agent.log = lambda s: lines.append(s)
     agent.run("hi")
     assert any("prompt caching" in line for line in lines)
 

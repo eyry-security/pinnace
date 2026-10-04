@@ -7,6 +7,7 @@ compaction hook and the finish() convention need control over every turn.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 from langchain_core.messages import (
@@ -23,6 +24,7 @@ from .config import AgentConfig, DEFAULT_MODEL, DEFAULT_SYSTEM
 from .sandbox import DockerSandbox, Sandbox, SandboxError
 from .session import SessionStore
 from .tools import FINISH_PREFIX, builtin_tools, parse_finish
+from .usage import CostBasis, UsageMeter, response_model
 
 
 class PinnaceError(RuntimeError):
@@ -47,6 +49,16 @@ def _make_model(model_ref: str):
     return init_chat_model(name, model_provider=provider)
 
 
+def _model_reference(model) -> str | None:
+    if isinstance(model, str):
+        return model
+    for name in ("model_name", "model"):
+        value = getattr(model, name, None)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 @dataclass
 class AgentResult:
     """What a run produced."""
@@ -61,6 +73,8 @@ class AgentResult:
     session_id: str | None
     transcript: list[dict] = field(default_factory=list)
     """Serialized messages, oldest first."""
+    usage: list[dict] = field(default_factory=list)
+    """Exact per-inference usage records generated during this run."""
 
     @property
     def finished(self) -> bool:
@@ -74,6 +88,7 @@ class AgentResult:
             "compacted": self.compacted,
             "session_id": self.session_id,
             "transcript": self.transcript,
+            "usage": self.usage,
         }
 
 
@@ -92,6 +107,11 @@ class PinnaceAgent:
         compaction_keep_last: recent messages kept verbatim when compacting.
         session_store / session_id: persist and resume transcripts.
         log: callable taking a string; turn-by-turn narration goes here.
+        usage_meter: durable JSONL meter (defaults to $PINNACE_USAGE_LOG or
+            ~/.pinnace/usage.jsonl).
+        cost_basis: explicit rates; known direct-provider defaults are used
+            only for exact provider/model refs.
+        agent_id / customer_id: attribution copied into every usage record.
     """
 
     def __init__(
@@ -106,9 +126,14 @@ class PinnaceAgent:
         session_store: SessionStore | None = None,
         session_id: str | None = None,
         log=None,
+        usage_meter: UsageMeter | None = None,
+        cost_basis: CostBasis | None = None,
+        agent_id: str | None = None,
+        customer_id: str | None = None,
     ) -> None:
         if model is None:
             model = AgentConfig.resolve().model
+        self.model_ref = _model_reference(model)
         self.model = _make_model(model) if isinstance(model, str) else model
         if sandbox is None:
             try:
@@ -128,6 +153,15 @@ class PinnaceAgent:
         self.session_store = session_store or SessionStore()
         self.session_id = session_id
         self.log = log or (lambda *a: None)
+        self.usage_meter = usage_meter or UsageMeter()
+        self.cost_basis = cost_basis
+        self.agent_id = (
+            agent_id
+            or os.environ.get("PINNACE_AGENT_ID")
+            or session_id
+            or "pinnace"
+        )
+        self.customer_id = customer_id or os.environ.get("PINNACE_CUSTOMER_ID")
 
     @classmethod
     def from_config(cls, config: AgentConfig) -> "PinnaceAgent":
@@ -136,6 +170,33 @@ class PinnaceAgent:
 
     def _say(self, msg: str) -> None:
         self.log(msg)
+
+    def _record_usage(
+        self,
+        response: AIMessage,
+        call_kind: str,
+        records: list[dict],
+    ) -> None:
+        model = response_model(response, self.model_ref)
+        record = self.usage_meter.record(
+            response,
+            model=model,
+            model_ref=self.model_ref,
+            call_kind=call_kind,
+            agent_id=self.agent_id,
+            customer_id=self.customer_id,
+            session_id=self.session_id,
+            cost_basis=self.cost_basis,
+        )
+        records.append(record)
+        tokens = record["usage"]
+        amount = record["cost"]["amount"]
+        self._say(
+            f"[pinnace] usage: model={model} input={tokens['input_tokens']} "
+            f"output={tokens['output_tokens']} cache_read={tokens['cache_read_tokens']} "
+            f"cost_usd={amount} status={record['cost']['status']} "
+            f"agent={self.agent_id}"
+        )
 
     def run(self, prompt: str) -> AgentResult:
         messages: list[BaseMessage] = []
@@ -155,17 +216,26 @@ class PinnaceAgent:
         compacted = 0
         structured = None
         final: str | None = None
+        usage_records: list[dict] = []
 
         while turns < self.max_turns:
             turns += 1
             if needs_compaction(messages, self.compaction_tokens):
                 before = estimate_tokens(messages)
-                messages = compact_messages(self.model, messages, self.compaction_keep_last)
+                messages = compact_messages(
+                    self.model,
+                    messages,
+                    self.compaction_keep_last,
+                    on_response=lambda response: self._record_usage(
+                        response, "compaction", usage_records
+                    ),
+                )
                 compacted += 1
                 self._say(f"[pinnace] compacted context ({before}→{estimate_tokens(messages)} est. tokens)")
 
             self._say(f"[pinnace] turn {turns}, calling model…")
             resp: AIMessage = self.bound.invoke(messages)
+            self._record_usage(resp, "agent_turn", usage_records)
             messages.append(resp)
 
             calls = resp.tool_calls or []
@@ -213,4 +283,5 @@ class PinnaceAgent:
             compacted=compacted,
             session_id=self.session_id,
             transcript=[dumpd(m) for m in messages],
+            usage=usage_records,
         )

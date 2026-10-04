@@ -42,11 +42,17 @@ def needs_compaction(messages: list[BaseMessage], max_tokens: int) -> bool:
     return estimate_tokens(messages) >= max_tokens
 
 
-def compact_messages(model, messages: list[BaseMessage], keep_last: int = 8) -> list[BaseMessage]:
+def compact_messages(
+    model,
+    messages: list[BaseMessage],
+    keep_last: int = 8,
+    on_response=None,
+) -> list[BaseMessage]:
     """Summarize everything but the tail into one system message.
 
     The original system prompt (messages[0], if it's a SystemMessage) is kept
     verbatim; the summary slots in right after it, then the recent tail.
+    ``on_response`` observes the raw model response for exact usage metering.
     """
     if len(messages) <= keep_last + 1:
         return messages
@@ -55,9 +61,12 @@ def compact_messages(model, messages: list[BaseMessage], keep_last: int = 8) -> 
     to_summarize = messages[body_start:-keep_last] if keep_last else messages[body_start:]
     tail = messages[-keep_last:] if keep_last else []
 
-    summary = model.invoke(
+    response = model.invoke(
         [SystemMessage(content=SUMMARIZE_PROMPT), *to_summarize]
-    ).content
+    )
+    if on_response is not None:
+        on_response(response)
+    summary = response.content
     if not isinstance(summary, str):
         summary = str(summary)
 

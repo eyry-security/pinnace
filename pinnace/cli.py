@@ -18,6 +18,7 @@ from .config import AgentConfig, DEFAULT_MODEL, DEFAULT_SYSTEM
 from .sandbox import DockerSandbox, LocalSandbox, SandboxError
 from .session import SessionStore
 from .tools import builtin_tools
+from .usage import UsageMeter
 
 
 def _log(msg: str) -> None:
@@ -64,6 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--workdir", default="./pinnace-work", help="workdir for the local sandbox")
     sp.add_argument("--unsafe-ok", action="store_true", help="allow the local sandbox (dev/tests only)")
     sp.add_argument("--session", default=None, help="persist/resume a named session")
+    sp.add_argument("--agent-id", default=None,
+                    help="usage attribution (default: $PINNACE_AGENT_ID, session, or pinnace)")
+    sp.add_argument("--customer-id", default=None,
+                    help="optional usage attribution (default: $PINNACE_CUSTOMER_ID)")
+    sp.add_argument("--usage-log", default=None,
+                    help="append-only usage JSONL (default: $PINNACE_USAGE_LOG or ~/.pinnace/usage.jsonl)")
     sp.add_argument("--json", action="store_true", help="emit the result as JSON on stdout")
     sp.add_argument("--quiet", action="store_true", help="no turn-by-turn narration on stderr")
 
@@ -90,6 +97,9 @@ def cmd_run(args) -> int:
             compaction_tokens=args.compaction_tokens,
             session_id=args.session,
             log=(lambda *a: None) if args.quiet else _log,
+            usage_meter=UsageMeter(args.usage_log) if args.usage_log else None,
+            agent_id=args.agent_id,
+            customer_id=args.customer_id,
         )
         agent = PinnaceAgent.from_config(config)
     except PinnaceError as e:

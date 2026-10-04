@@ -10,6 +10,7 @@ from langchain_core.tools import BaseTool
 
 from .sandbox import Sandbox
 from .session import SessionStore
+from .usage import CostBasis, UsageMeter
 
 DEFAULT_MODEL = "anthropic:claude-opus-4-6"
 DEFAULT_SYSTEM = """You are Pinnace, an autonomous agent running inside a sandbox.
@@ -39,6 +40,10 @@ class AgentConfig:
     session_store: SessionStore | None = None
     session_id: str | None = None
     log: Callable[[str], None] | None = None
+    usage_meter: UsageMeter | None = None
+    cost_basis: CostBasis | None = None
+    agent_id: str | None = None
+    customer_id: str | None = None
 
     @classmethod
     def resolve(cls, model: Any = None, **values: Any) -> "AgentConfig":
@@ -62,4 +67,8 @@ class AgentConfig:
             "session_store": self.session_store,
             "session_id": self.session_id,
             "log": self.log,
+            "usage_meter": self.usage_meter,
+            "cost_basis": self.cost_basis,
+            "agent_id": self.agent_id,
+            "customer_id": self.customer_id,
         }

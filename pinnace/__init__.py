@@ -6,6 +6,7 @@ from .context import Message
 from .sandbox import DockerSandbox, ExecResult, LocalSandbox, Sandbox, SandboxError
 from .session import SessionStore
 from .tools import builtin_tools
+from .usage import CostBasis, TokenUsage, UsageMeter, UsageMeterError
 
 __version__ = "0.1.0"
 
@@ -13,6 +14,7 @@ __all__ = [
     "__version__",
     "AgentConfig",
     "AgentResult",
+    "CostBasis",
     "DockerSandbox",
     "ExecResult",
     "LocalSandbox",
@@ -22,5 +24,8 @@ __all__ = [
     "Sandbox",
     "SandboxError",
     "SessionStore",
+    "TokenUsage",
+    "UsageMeter",
+    "UsageMeterError",
     "builtin_tools",
 ]

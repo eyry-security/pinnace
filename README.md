@@ -14,6 +14,7 @@ Part of **[Eyry](https://eyry.io)** — open-source, agentic recon and offensive
 - **Docker sandbox** — one throwaway container per run (`python:3.12-slim` default, 1g memory cap); `network="none"` cuts egress. `LocalSandbox` is the dev fallback and refuses to run without `unsafe_ok=True`
 - **`finish()` convention** — the agent ends a run with a structured JSON result instead of vibes
 - **Persistent sessions** — transcripts saved as JSONL under `~/.pinnace/sessions/<name>/transcript.jsonl` (`$PINNACE_HOME` overrides), resumable by name
+- **Exact token metering** — every agent-turn and compaction inference is durably logged with provider-reported input/output/cache tokens, model, explicit cost basis, decimal cost, and agent/customer/session attribution
 - **Provider-agnostic models** — any LangChain chat model via `provider:model` refs. Default is `anthropic:claude-opus-4-6` (the suite-wide model decision); `$PINNACE_MODEL` or an explicit `model=` overrides it
 
 Deliberately *not* a security tool. Pinnace is the keystone everything agentic in the suite builds on, and its generality is the point: point a sandboxed agent at anything.
@@ -44,6 +45,10 @@ pinnace run --session recon-1 --prompt "now check its open issues for security-r
 
 # machine-readable result
 pinnace run --prompt "audit this repo for hardcoded secrets" --json > result.json
+
+# attribute every inference and choose the append-only usage log
+pinnace run --session recon-1 --agent-id reviewer-1 --customer-id team-1 \
+  --usage-log ./usage.jsonl --prompt "continue the review"
 
 # prompt from a file, custom system prompt, no sandbox network
 pinnace run --prompt-file task.md --system "you are a terse auditor" --no-net
@@ -81,18 +86,29 @@ Each turn: estimate context size → compact if over the tripwire → call the m
 
 **Sessions** are JSONL transcripts on disk. Pass `--session <name>` (or `session_id=` in the API) and the transcript persists; run again with the same name and the agent picks up where it left off.
 
+**Usage metering** appends one schema-versioned JSON record for every model call,
+including compaction, to `$PINNACE_USAGE_LOG` or `~/.pinnace/usage.jsonl`.
+`--usage-log`, `--agent-id`, and `--customer-id` configure the destination and
+attribution; session ID is included automatically. Records contain only model,
+token, pricing, cost, and attribution metadata — never prompts or completions.
+Provider token counts are never estimated. Missing usage, unknown rates, or an
+ambiguous cache-write TTL produces an explicit unpriced record instead of a
+fabricated charge. A failed meter write raises an error rather than silently
+running unmetered.
+
 ## CLI
 
 ```
 pinnace run --prompt TEXT | --prompt-file FILE [--model provider:model]
     [--system TEXT] [--max-turns N] [--compaction-tokens N]
     [--sandbox docker|local] [--image IMG] [--no-net] [--workdir DIR]
-    [--unsafe-ok] [--session NAME] [--json] [--quiet]
+    [--unsafe-ok] [--session NAME] [--agent-id ID] [--customer-id ID]
+    [--usage-log PATH] [--json] [--quiet]
 pinnace sessions [--root DIR]
 pinnace tools
 ```
 
-`--json` prints `result.to_dict()` on stdout; narration goes to stderr. `AgentResult` carries `final` (last message text), `structured` (the `finish()` payload), `turns`, `compacted`, `session_id`, `finished`, and `transcript` (serialized message dicts).
+`--json` prints `result.to_dict()` on stdout; narration goes to stderr. `AgentResult` carries `final` (last message text), `structured` (the `finish()` payload), `turns`, `compacted`, `session_id`, `finished`, `transcript` (serialized message dicts), and `usage` (the exact per-inference meter records for this run).
 
 ## Where it fits
 

@@ -31,8 +31,51 @@ class PinnaceError(RuntimeError):
     """Anything the agent runtime itself gets wrong."""
 
 
-def _make_model(model_ref: str):
-    """Build a chat model from a "provider:model" ref via init_chat_model."""
+THINKING_BUDGET_TOKENS = 4000
+"""Extended-thinking token budget wired in when thinking=True."""
+
+THINKING_MAX_TOKENS = 8000
+"""max_tokens used with thinking=True; Anthropic requires max_tokens > budget_tokens."""
+
+THINKING_LOG_MAX_CHARS = 2000
+"""Cap on thinking text echoed into the run narration per turn."""
+
+
+def extract_thinking(resp: AIMessage) -> str:
+    """Pull thinking/reasoning text out of a langchain model response.
+
+    Handles Anthropic extended-thinking content blocks (dicts or objects),
+    redacted-thinking blocks, and reasoning stashed in ``additional_kwargs``
+    by other providers. Returns "" when the response carries no thinking.
+    """
+    parts: list[str] = []
+    blocks = resp.content if isinstance(resp.content, list) else []
+    for block in blocks:
+        if isinstance(block, dict):
+            btype = block.get("type")
+            text = block.get("thinking")
+        else:
+            btype = getattr(block, "type", None)
+            text = getattr(block, "thinking", None)
+        if btype == "thinking":
+            if isinstance(text, str) and text:
+                parts.append(text)
+        elif btype == "redacted_thinking":
+            parts.append("[redacted thinking]")
+    for key in ("reasoning", "reasoning_content", "thinking"):
+        extra = resp.additional_kwargs.get(key)
+        if isinstance(extra, str) and extra:
+            parts.append(extra)
+    return "\n".join(parts).strip()
+
+
+def _make_model(model_ref: str, thinking: bool = False):
+    """Build a chat model from a "provider:model" ref via init_chat_model.
+
+    When thinking=True and the provider supports it (currently anthropic),
+    the model's extended-thinking mode is enabled so run() can surface the
+    reasoning in the narration. Other providers ignore the flag.
+    """
     try:
         from langchain.chat_models import init_chat_model
     except ImportError as e:
@@ -46,7 +89,11 @@ def _make_model(model_ref: str):
         raise PinnaceError(
             f"bad model ref {model_ref!r}: want 'provider:model', e.g. 'anthropic:claude-opus-4-6'"
         )
-    return init_chat_model(name, model_provider=provider)
+    kwargs: dict = {}
+    if thinking and provider == "anthropic":
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": THINKING_BUDGET_TOKENS}
+        kwargs["max_tokens"] = THINKING_MAX_TOKENS
+    return init_chat_model(name, model_provider=provider, **kwargs)
 
 
 def _model_reference(model) -> str | None:
@@ -112,6 +159,10 @@ class PinnaceAgent:
         cost_basis: explicit rates; known direct-provider defaults are used
             only for exact provider/model refs.
         agent_id / customer_id: attribution copied into every usage record.
+        thinking: opt-in extended thinking for providers that support it
+            (currently anthropic). Enables thinking mode when the model is
+            built from a "provider:model" ref; has no effect on an
+            already-built model passed in directly. Default off.
     """
 
     def __init__(
@@ -130,11 +181,13 @@ class PinnaceAgent:
         cost_basis: CostBasis | None = None,
         agent_id: str | None = None,
         customer_id: str | None = None,
+        thinking: bool = False,
     ) -> None:
         if model is None:
             model = AgentConfig.resolve().model
         self.model_ref = _model_reference(model)
-        self.model = _make_model(model) if isinstance(model, str) else model
+        self.thinking = thinking
+        self.model = _make_model(model, thinking=thinking) if isinstance(model, str) else model
         if sandbox is None:
             try:
                 sandbox = DockerSandbox()
@@ -237,6 +290,12 @@ class PinnaceAgent:
             resp: AIMessage = self.bound.invoke(messages)
             self._record_usage(resp, "agent_turn", usage_records)
             messages.append(resp)
+
+            thinking = extract_thinking(resp)
+            if thinking:
+                if len(thinking) > THINKING_LOG_MAX_CHARS:
+                    thinking = thinking[:THINKING_LOG_MAX_CHARS] + "…"
+                self._say(f"[pinnace] thinking: {thinking}")
 
             calls = resp.tool_calls or []
             if not calls:

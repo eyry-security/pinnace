@@ -1,6 +1,6 @@
 """pinnace: general multi-turn agent runtime with compaction, tools, and a Docker sandbox."""
 
-from .agent import AgentResult, PinnaceAgent, PinnaceError
+from .agent import AgentResult, PinnaceAgent, PinnaceError, extract_thinking
 from .config import AgentConfig
 from .context import Message
 from .prompts import (
@@ -32,6 +32,7 @@ __all__ = [
     "PinnaceError",
     "PromptError",
     "PromptPack",
+    "extract_thinking",
     "Sandbox",
     "SandboxError",
     "SessionStore",

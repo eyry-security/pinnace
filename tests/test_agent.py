@@ -1,8 +1,14 @@
 """The agent loop, driven by a scripted fake model — no API keys."""
 
+from types import SimpleNamespace
+
 from langchain_core.messages import AIMessage
 
-from pinnace.agent import PinnaceAgent
+from pinnace.agent import (
+    PinnaceAgent,
+    _make_model,
+    extract_thinking,
+)
 from pinnace.sandbox import LocalSandbox
 from pinnace.session import SessionStore
 
@@ -94,3 +100,137 @@ def test_session_persists_and_resumes(tmp_path):
     # Resumed transcript contains both user prompts.
     humans = [m for m in r2.transcript if m.get("id", [""])[-1] == "HumanMessage"]
     assert [m["kwargs"]["content"] for m in humans] == ["task one", "task two"]
+
+
+def _thinking_msg(thinking, text="final answer"):
+    return AIMessage(
+        content=[
+            {"type": "thinking", "thinking": thinking, "signature": "sig"},
+            {"type": "text", "text": text},
+        ]
+    )
+
+
+def test_extract_thinking_dict_blocks():
+    resp = _thinking_msg("consider the evidence carefully")
+    assert extract_thinking(resp) == "consider the evidence carefully"
+
+
+def test_extract_thinking_object_blocks():
+    # Some providers return content blocks as objects; assign post-construction
+    # since AIMessage validation only accepts str/dict content.
+    resp = AIMessage(content="placeholder")
+    resp.content = [
+        SimpleNamespace(type="thinking", thinking="object-style block"),
+        SimpleNamespace(type="text", text="answer"),
+    ]
+    assert extract_thinking(resp) == "object-style block"
+
+
+def test_extract_thinking_redacted():
+    resp = AIMessage(content=[
+        {"type": "redacted_thinking", "data": "encrypted"},
+        {"type": "text", "text": "answer"},
+    ])
+    assert extract_thinking(resp) == "[redacted thinking]"
+
+
+def test_extract_thinking_additional_kwargs():
+    resp = AIMessage(
+        content="answer",
+        additional_kwargs={"reasoning_content": "provider-side reasoning"},
+    )
+    assert extract_thinking(resp) == "provider-side reasoning"
+
+
+def test_extract_thinking_empty_when_none():
+    assert extract_thinking(AIMessage(content="just text")) == ""
+    assert extract_thinking(AIMessage(content="")) == ""
+    assert extract_thinking(AIMessage(content=[{"type": "text", "text": "x"}])) == ""
+
+
+def _capture_agent(tmp_path, script, **kw):
+    logged = []
+    agent = PinnaceAgent(
+        model=FakeModel(script),
+        sandbox=LocalSandbox(str(tmp_path / "work"), unsafe_ok=True),
+        session_store=SessionStore(tmp_path / "sessions"),
+        log=logged.append,
+        **kw,
+    )
+    return agent, logged
+
+
+def test_run_emits_thinking_line(tmp_path):
+    script = [
+        AIMessage(
+            content=[{"type": "thinking", "thinking": "check files first", "signature": "s"}],
+            tool_calls=[_tc("shell", {"command": "echo hi"}, 1)],
+        ),
+        AIMessage(content="done"),
+    ]
+    agent, logged = _capture_agent(tmp_path, script)
+    result = agent.run("do the thing")
+    assert result.turns == 2
+    lines = [m for m in logged if m.startswith("[pinnace] thinking:")]
+    assert len(lines) == 1
+    assert "check files first" in lines[0]
+
+
+def test_run_thinking_truncated(tmp_path):
+    long_thinking = "x" * 5000
+    agent, logged = _capture_agent(tmp_path, [_thinking_msg(long_thinking)])
+    agent.run("quick question")
+    lines = [m for m in logged if m.startswith("[pinnace] thinking:")]
+    assert len(lines) == 1
+    assert len(lines[0]) <= len("[pinnace] thinking: ") + 2000 + 1
+    assert lines[0].endswith("…")
+
+
+def test_run_no_thinking_no_line(tmp_path):
+    agent, logged = _capture_agent(tmp_path, [AIMessage(content="plain")])
+    agent.run("quick question")
+    assert not [m for m in logged if m.startswith("[pinnace] thinking:")]
+
+
+def test_thinking_flag_stored_on_agent(tmp_path):
+    agent, _ = _capture_agent(tmp_path, [AIMessage(content="x")], thinking=True)
+    assert agent.thinking is True
+    agent2, _ = _capture_agent(tmp_path, [AIMessage(content="x")])
+    assert agent2.thinking is False
+
+
+def _patched_init(monkeypatch):
+    import langchain.chat_models
+
+    seen = {}
+
+    def fake_init(name, model_provider=None, **kwargs):
+        seen["name"] = name
+        seen["model_provider"] = model_provider
+        seen["kwargs"] = kwargs
+        return "fake-model"
+
+    monkeypatch.setattr(langchain.chat_models, "init_chat_model", fake_init)
+    return seen
+
+
+def test_make_model_thinking_enables_anthropic_thinking(monkeypatch):
+    seen = _patched_init(monkeypatch)
+    assert _make_model("anthropic:claude-opus-4-6", thinking=True) == "fake-model"
+    assert seen["kwargs"]["thinking"] == {"type": "enabled", "budget_tokens": 4000}
+    # Anthropic requires max_tokens > budget_tokens, so it is raised too.
+    assert seen["kwargs"]["max_tokens"] == 8000
+
+
+def test_make_model_thinking_off_sends_no_thinking_kwargs(monkeypatch):
+    seen = _patched_init(monkeypatch)
+    _make_model("anthropic:claude-opus-4-6", thinking=False)
+    assert "thinking" not in seen["kwargs"]
+    assert "max_tokens" not in seen["kwargs"]
+
+
+def test_make_model_thinking_ignored_for_other_providers(monkeypatch):
+    seen = _patched_init(monkeypatch)
+    _make_model("openai:gpt-5", thinking=True)
+    assert "thinking" not in seen["kwargs"]

@@ -13,6 +13,7 @@ import urllib.parse
 from langchain_core.tools import BaseTool, StructuredTool
 
 from .sandbox import Sandbox
+from .tool_policy import ToolPolicyError, check_shell, check_write
 
 _FETCH_MAX_CHARS = 100_000
 _FETCH_MAX_REDIRECTS = 10
@@ -157,6 +158,10 @@ def builtin_tools(sandbox: Sandbox) -> list[BaseTool]:
 
         Prefer this over guessing: explore the environment, run tools, check
         results. Long-running commands should background themselves."""
+        try:
+            check_shell(command)
+        except ToolPolicyError as e:
+            return f"error: {e}"
         return _format_exec(command, sandbox.exec(command))
 
     def read_file(path: str) -> str:
@@ -168,6 +173,10 @@ def builtin_tools(sandbox: Sandbox) -> list[BaseTool]:
 
     def write_file(path: str, content: str) -> str:
         """Write a file into the sandbox workdir. Creates parent dirs. Path is relative."""
+        try:
+            check_write(path, content)
+        except ToolPolicyError as e:
+            return f"error: {e}"
         try:
             sandbox.write_file(path, content)
             return f"wrote {len(content)} chars to {path}"

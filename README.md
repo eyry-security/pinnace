@@ -24,7 +24,7 @@ pip install pinnace
 pip install "pinnace[anthropic]"   # or pinnace[openai]
 ```
 
-Needs a model: set `PINNACE_MODEL` (e.g. `anthropic:claude-sonnet-4-5`) or pass `--model`.
+Needs a model: set `PINNACE_MODEL` (e.g. `anthropic:claude-opus-4-6`) or pass `--model`.
 Docker is required for the real sandbox; without it, use `--sandbox local --unsafe-ok`
 (dev only — it runs model-generated commands on your machine).
 
@@ -50,7 +50,7 @@ Python API:
 from pinnace import PinnaceAgent, LocalSandbox
 
 agent = PinnaceAgent(
-    model="anthropic:claude-sonnet-4-5",
+    model="anthropic:claude-opus-4-6",
     sandbox=LocalSandbox("./work", unsafe_ok=True),  # dev only
     session_id="my-run",
     max_turns=30,
@@ -58,6 +58,11 @@ agent = PinnaceAgent(
 result = agent.run("write a fuzzer for the login endpoint and run it")
 print(result.structured or result.final)
 ```
+
+For reusable settings, build `AgentConfig.resolve(...)` and pass it to
+`PinnaceAgent.from_config(config)`. The public `Message` type is the LangChain
+message base used by the in-memory loop and session store; result transcripts
+remain serialized message dictionaries.
 
 ## How it works
 

@@ -14,6 +14,7 @@ import sys
 
 from . import __version__
 from .agent import PinnaceAgent, PinnaceError
+from .config import AgentConfig, DEFAULT_MODEL, DEFAULT_SYSTEM
 from .sandbox import DockerSandbox, LocalSandbox, SandboxError
 from .session import SessionStore
 from .tools import builtin_tools
@@ -49,7 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
     src = sp.add_mutually_exclusive_group(required=True)
     src.add_argument("--prompt", help="the task, as a string")
     src.add_argument("--prompt-file", help="read the task from a file")
-    sp.add_argument("--model", default=None, help="provider:model ref (default: $PINNACE_MODEL or anthropic:claude-sonnet-4-5)")
+    sp.add_argument(
+        "--model", default=None,
+        help=f"provider:model ref (default: $PINNACE_MODEL or {DEFAULT_MODEL})",
+    )
     sp.add_argument("--system", default=None, help="override the system prompt")
     sp.add_argument("--max-turns", type=int, default=30)
     sp.add_argument("--compaction-tokens", type=int, default=100_000,
@@ -78,16 +82,18 @@ def cmd_run(args) -> int:
             prompt = f.read()
     sandbox = _make_sandbox(args)
     try:
-        agent = PinnaceAgent(
+        config = AgentConfig.resolve(
             model=args.model,
             sandbox=sandbox,
-            system_prompt=args.system,
+            system_prompt=DEFAULT_SYSTEM if args.system is None else args.system,
             max_turns=args.max_turns,
             compaction_tokens=args.compaction_tokens,
             session_id=args.session,
             log=(lambda *a: None) if args.quiet else _log,
         )
+        agent = PinnaceAgent.from_config(config)
     except PinnaceError as e:
+        sandbox.close()
         _log(f"error: {e}")
         return 1
     try:

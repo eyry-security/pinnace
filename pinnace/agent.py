@@ -7,7 +7,6 @@ compaction hook and the finish() convention need control over every turn.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 
 from langchain_core.messages import (
@@ -20,15 +19,10 @@ from langchain_core.messages import (
 from langchain_core.tools import BaseTool
 
 from .compaction import compact_messages, estimate_tokens, needs_compaction
+from .config import AgentConfig, DEFAULT_MODEL, DEFAULT_SYSTEM
 from .sandbox import DockerSandbox, Sandbox, SandboxError
 from .session import SessionStore
 from .tools import FINISH_PREFIX, builtin_tools, parse_finish
-
-DEFAULT_SYSTEM = """You are Pinnace, an autonomous agent running inside a sandbox.
-Work the task step by step. Prefer running commands and reading files over guessing.
-When the job is done, call finish() with a JSON summary of the result instead of
-just stopping. Keep tool output in mind: it's truncated at 200k chars, so page
-through big outputs rather than dumping them whole."""
 
 
 class PinnaceError(RuntimeError):
@@ -48,7 +42,7 @@ def _make_model(model_ref: str):
     provider, _, name = model_ref.partition(":")
     if not name:
         raise PinnaceError(
-            f"bad model ref {model_ref!r}: want 'provider:model', e.g. 'anthropic:claude-sonnet-4-5'"
+            f"bad model ref {model_ref!r}: want 'provider:model', e.g. 'anthropic:claude-opus-4-6'"
         )
     return init_chat_model(name, model_provider=provider)
 
@@ -88,7 +82,7 @@ class PinnaceAgent:
 
     Args:
         model: a langchain chat model, or a "provider:model" ref string
-            (default: $PINNACE_MODEL or "anthropic:claude-sonnet-4-5").
+            (default: $PINNACE_MODEL or "anthropic:claude-opus-4-6").
         sandbox: where tools execute. Defaults to a DockerSandbox (raises a
             clear error when Docker isn't there).
         tools: extra langchain tools appended after the built-ins.
@@ -114,7 +108,7 @@ class PinnaceAgent:
         log=None,
     ) -> None:
         if model is None:
-            model = os.environ.get("PINNACE_MODEL", "anthropic:claude-sonnet-4-5")
+            model = AgentConfig.resolve().model
         self.model = _make_model(model) if isinstance(model, str) else model
         if sandbox is None:
             try:
@@ -134,6 +128,11 @@ class PinnaceAgent:
         self.session_store = session_store or SessionStore()
         self.session_id = session_id
         self.log = log or (lambda *a: None)
+
+    @classmethod
+    def from_config(cls, config: AgentConfig) -> "PinnaceAgent":
+        """Construct an agent from a reusable configuration value object."""
+        return cls(**config.to_kwargs())
 
     def _say(self, msg: str) -> None:
         self.log(msg)

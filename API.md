@@ -13,18 +13,18 @@ pip install pinnace "pinnace[anthropic]"   # or pinnace[openai]
 
 ```python
 from pinnace import (
-    PinnaceAgent, AgentResult,
+    PinnaceAgent, AgentConfig, AgentResult, Message,
     Sandbox, DockerSandbox, LocalSandbox, SandboxError,
     SessionStore, builtin_tools,
 )
 
 agent = PinnaceAgent(
-    model="anthropic:claude-sonnet-4-5",  # or a langchain chat model instance,
+    model="anthropic:claude-opus-4-6",  # or a langchain chat model instance,
                                           # or omit -> $PINNACE_MODEL
     sandbox=DockerSandbox(),              # default if omitted; raises SandboxError
                                           # with a clear message when Docker is absent
     tools=[...],                          # extra langchain tools, appended AFTER builtins
-    system_prompt="...",                  # default: DEFAULT_SYSTEM in pinnace.agent
+    system_prompt="...",                  # default: DEFAULT_SYSTEM in pinnace.config
     max_turns=30,
     compaction_tokens=100_000,            # rough chars/4 tripwire
     compaction_keep_last=8,
@@ -34,6 +34,19 @@ agent = PinnaceAgent(
 )
 result: AgentResult = agent.run("do the thing")
 ```
+
+`AgentConfig.resolve(...)` provides the same constructor values in a reusable
+object, including `PINNACE_MODEL` resolution. Construct with
+`PinnaceAgent.from_config(config)`. `Message` aliases LangChain's `BaseMessage`,
+the in-memory representation used by the agent loop and `SessionStore`.
+`AgentResult.transcript` remains a list of serialized message dictionaries.
+
+### Convergence note
+
+The pre-merge v0 branch used `anthropic:claude-sonnet-4-5` as its fallback.
+The converged 0.1.0 contract defaults to `anthropic:claude-opus-4-6`, per the
+suite-wide model decision. `PINNACE_MODEL` and explicit `model=` values still
+override the fallback.
 
 ## AgentResult
 

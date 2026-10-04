@@ -148,6 +148,8 @@ class PinnaceAgent:
         self.log = log or (lambda *a: None)
         self.prompt_caching = prompt_caching
         self._cache_system = prompt_caching and _supports_prompt_caching(self.model)
+        if self._cache_system:
+            self._add_tools_cache_breakpoint()
 
     @classmethod
     def from_config(cls, config: AgentConfig) -> "PinnaceAgent":
@@ -165,6 +167,24 @@ class PinnaceAgent:
                  "cache_control": dict(CACHE_CONTROL_EPHEMERAL)},
             ])
         return SystemMessage(content=self.system_prompt)
+
+    def _add_tools_cache_breakpoint(self) -> None:
+        """Mark the last bound tool definition cacheable (Anthropic).
+
+        The tool list is static across turns, so caching it avoids re-billing
+        the definitions every turn. No-op unless the bound model exposes the
+        formatted tool list (LangChain RunnableBinding kwargs).
+        """
+        bound_kwargs = getattr(self.bound, "kwargs", None)
+        if not isinstance(bound_kwargs, dict):
+            return
+        tools = bound_kwargs.get("tools")
+        if not tools:
+            return
+        tools = [dict(t) if isinstance(t, dict) else t for t in tools]
+        if isinstance(tools[-1], dict):
+            tools[-1] = {**tools[-1], "cache_control": dict(CACHE_CONTROL_EPHEMERAL)}
+            self.bound = self.model.bind(tools=tools)
 
     def run(self, prompt: str) -> AgentResult:
         messages: list[BaseMessage] = []

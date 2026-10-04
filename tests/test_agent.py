@@ -165,3 +165,48 @@ def test_supports_prompt_caching_rejects_other_models():
 def test_config_prompt_caching_roundtrip():
     assert AgentConfig().to_kwargs()["prompt_caching"] is True
     assert AgentConfig(prompt_caching=False).to_kwargs()["prompt_caching"] is False
+
+
+def test_tools_cache_breakpoint_on_last_tool(tmp_path):
+    """The last bound tool definition carries the cache breakpoint."""
+    from langchain_anthropic import ChatAnthropic
+
+    from pinnace.sandbox import LocalSandbox
+    from pinnace.session import SessionStore
+
+    agent = PinnaceAgent(
+        model=ChatAnthropic(model="claude-opus-4-6"),
+        sandbox=LocalSandbox(str(tmp_path / "work"), unsafe_ok=True),
+        session_store=SessionStore(tmp_path / "sessions"),
+        log=lambda *a: None,
+    )
+    assert agent._cache_system is True
+    tools = agent.bound.kwargs["tools"]
+    assert len(tools) == 5
+    assert tools[-1]["cache_control"] == {"type": "ephemeral"}
+    assert all("cache_control" not in t for t in tools[:-1])
+
+
+def test_tools_cache_breakpoint_opt_out(tmp_path):
+    from langchain_anthropic import ChatAnthropic
+
+    from pinnace.sandbox import LocalSandbox
+    from pinnace.session import SessionStore
+
+    agent = PinnaceAgent(
+        model=ChatAnthropic(model="claude-opus-4-6"),
+        sandbox=LocalSandbox(str(tmp_path / "work"), unsafe_ok=True),
+        session_store=SessionStore(tmp_path / "sessions"),
+        log=lambda *a: None,
+        prompt_caching=False,
+    )
+    tools = agent.bound.kwargs["tools"]
+    assert all("cache_control" not in t for t in tools)
+
+
+def test_tools_cache_breakpoint_noop_for_fake_model(tmp_path):
+    """Non-Anthropic models: no breakpoint, no crash."""
+    agent = _agent(tmp_path, [AIMessage(content="done")])
+    assert agent._cache_system is False
+    tools = getattr(getattr(agent, "bound", None), "kwargs", {}).get("tools", [])
+    assert all("cache_control" not in t for t in tools)

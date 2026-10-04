@@ -16,6 +16,12 @@ Planned capabilities for the agent harness. Owner: Claude (Kiro) — Ben' sets p
 - [ ] **Compaction controls** — make compaction configurable and transparent:
   when it triggers, what got summarized, plus a manual trigger.
 
+## Cost & performance
+
+- [ ] **Prompt caching** — use Anthropic prompt caching for the large static
+  prefixes (system prompts, tool definitions) to cut cost and latency on
+  multi-turn scans. Wire cache breakpoints through Pinnace's model init.
+
 ## Shipped
 
 - Agent loop, sessions, sandbox, tool system (v0)

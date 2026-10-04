@@ -90,6 +90,11 @@ pinnace sessions [--root DIR]
 pinnace tools
 ```
 
+Interactive CLI narration is written to stderr with TTY-aware color and
+progress markers for turns, tool calls, compaction, sessions, completion, and
+errors. Set `NO_COLOR` to disable ANSI styling; redirected output is always
+escape-free.
+
 ## Conventions for downstream repos
 
 - Same `pyproject.toml` shape as purser/pinnace (setuptools, `[project.scripts]`

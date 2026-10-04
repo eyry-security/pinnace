@@ -92,7 +92,7 @@ pinnace sessions [--root DIR]
 pinnace tools
 ```
 
-`--json` prints `result.to_dict()` on stdout; narration goes to stderr. `AgentResult` carries `final` (last message text), `structured` (the `finish()` payload), `turns`, `compacted`, `session_id`, `finished`, and `transcript` (serialized message dicts).
+`--json` prints `result.to_dict()` on stdout; narration goes to stderr. Interactive narration uses TTY-aware color plus distinct turn, tool, compaction, session, success, and error markers; set `NO_COLOR` to disable ANSI styling. Redirected output never contains escape sequences. `AgentResult` carries `final` (last message text), `structured` (the `finish()` payload), `turns`, `compacted`, `session_id`, `finished`, and `transcript` (serialized message dicts).
 
 ## Where it fits
 

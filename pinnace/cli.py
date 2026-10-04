@@ -18,10 +18,11 @@ from .config import AgentConfig, DEFAULT_MODEL, DEFAULT_SYSTEM
 from .sandbox import DockerSandbox, LocalSandbox, SandboxError
 from .session import SessionStore
 from .tools import builtin_tools
+from .terminal import TerminalRenderer
 
 
 def _log(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
+    TerminalRenderer(stream=sys.stderr)(msg)
 
 
 def _make_sandbox(args):

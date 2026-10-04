@@ -164,7 +164,7 @@ class PinnaceAgent:
                 compacted += 1
                 self._say(f"[pinnace] compacted context ({before}→{estimate_tokens(messages)} est. tokens)")
 
-            self._say(f"[pinnace] turn {turns}, calling model…")
+            self._say(f"[pinnace] turn {turns}/{self.max_turns}, calling model…")
             resp: AIMessage = self.bound.invoke(messages)
             messages.append(resp)
 

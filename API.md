@@ -16,6 +16,7 @@ from pinnace import (
     PinnaceAgent, AgentConfig, AgentResult, Message,
     Sandbox, DockerSandbox, LocalSandbox, SandboxError,
     SessionStore, builtin_tools,
+    UsageMeter, CostBasis, TokenUsage, UsageMeterError,
 )
 
 agent = PinnaceAgent(
@@ -30,6 +31,10 @@ agent = PinnaceAgent(
     compaction_keep_last=8,
     session_store=SessionStore(),         # default ~/.pinnace/sessions (or $PINNACE_HOME)
     session_id="run-name",                # persist + resume transcript; None = ephemeral
+    agent_id="reviewer-1",               # copied into every inference usage record
+    customer_id="team-1",                # optional tenant attribution
+    usage_meter=UsageMeter("usage.jsonl"), # default: $PINNACE_USAGE_LOG or ~/.pinnace/usage.jsonl
+    cost_basis=CostBasis(...),             # optional explicit rates for custom models/providers
     log=print,                            # turn-by-turn narration callable
 )
 result: AgentResult = agent.run("do the thing")
@@ -56,6 +61,24 @@ override the fallback.
 - `result.finished: bool` — True when finish() was called
 - `result.to_dict()` — JSON-serializable (transcript = list of serialized messages)
 - `result.transcript` — list of langchain `dumpd` message dicts
+- `result.usage` — one structured record per model call, including compaction
+
+## Exact usage metering
+
+Every inference appends one schema-versioned JSON object to
+`$PINNACE_USAGE_LOG` or `~/.pinnace/usage.jsonl`. Records contain the actual
+response model, call kind, agent/customer/session attribution, provider-reported
+input/output/cache-read/cache-write tokens, the complete USD-per-million cost
+basis, and an exact decimal charge. `AgentResult.usage` contains the same records
+for that run. Prompts and completions are never copied into the usage log.
+
+The meter does not estimate billing data. If a provider omits usage metadata,
+a custom model has no configured `CostBasis`, or cache-write tokens lack the
+5-minute/1-hour split needed for exact pricing, the call is still logged with a
+specific unpriced status and `amount: null`. `CostBasis` lets callers provide
+explicit rates for custom provider/model pairs. The built-in basis is selected
+only for the exact default direct-provider model ref. Meter write failures raise
+`UsageMeterError` so silent unmetered operation is impossible.
 
 ## Built-in tools (bound to the run's sandbox)
 
@@ -85,7 +108,8 @@ output is a finish marker (wrapping non-JSON in `{"result": ...}`), else None.
 ```
 pinnace run --prompt TEXT | --prompt-file FILE [--model provider:model]
     [--max-turns N] [--sandbox docker|local] [--image IMG] [--no-net]
-    [--session NAME] [--json] [--quiet]
+    [--session NAME] [--agent-id ID] [--customer-id ID] [--usage-log PATH]
+    [--json] [--quiet]
 pinnace sessions [--root DIR]
 pinnace tools
 ```

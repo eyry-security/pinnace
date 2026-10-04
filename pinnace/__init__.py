@@ -14,6 +14,7 @@ from .prompts import (
 from .sandbox import DockerSandbox, ExecResult, LocalSandbox, Sandbox, SandboxError
 from .session import SessionStore
 from .tools import builtin_tools
+from .usage import CostBasis, TokenUsage, UsageMeter, UsageMeterError
 
 __version__ = "0.1.0"
 
@@ -22,6 +23,7 @@ __all__ = [
     "AgentConfig",
     "AgentResult",
     "DEFAULT_PROMPT_PACK_ID",
+    "CostBasis",
     "DockerSandbox",
     "ExecResult",
     "LocalSandbox",
@@ -34,6 +36,9 @@ __all__ = [
     "SandboxError",
     "SessionStore",
     "available_prompt_packs",
+    "TokenUsage",
+    "UsageMeter",
+    "UsageMeterError",
     "builtin_tools",
     "get_prompt_pack",
     "load_prompt_pack",

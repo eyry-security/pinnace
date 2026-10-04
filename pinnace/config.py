@@ -39,6 +39,7 @@ class AgentConfig:
     session_store: SessionStore | None = None
     session_id: str | None = None
     log: Callable[[str], None] | None = None
+    thinking: bool = False
 
     @classmethod
     def resolve(cls, model: Any = None, **values: Any) -> "AgentConfig":
@@ -62,4 +63,5 @@ class AgentConfig:
             "session_store": self.session_store,
             "session_id": self.session_id,
             "log": self.log,
+            "thinking": self.thinking,
         }

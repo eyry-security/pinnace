@@ -2,6 +2,7 @@
 
 Subcommands:
   run       hand the agent a prompt and let it work
+  prompts   inspect built-in versioned prompt packs
   sessions  list saved sessions
   tools     list the built-in tools
 """
@@ -14,7 +15,14 @@ import sys
 
 from . import __version__
 from .agent import PinnaceAgent, PinnaceError
-from .config import AgentConfig, DEFAULT_MODEL, DEFAULT_SYSTEM
+from .config import AgentConfig, DEFAULT_MODEL
+from .prompts import (
+    DEFAULT_PROMPT_PACK_ID,
+    PromptError,
+    available_prompt_packs,
+    get_prompt_pack,
+    load_prompt_pack,
+)
 from .sandbox import DockerSandbox, LocalSandbox, SandboxError
 from .session import SessionStore
 from .tools import builtin_tools
@@ -55,7 +63,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--model", default=None,
         help=f"provider:model ref (default: $PINNACE_MODEL or {DEFAULT_MODEL})",
     )
-    sp.add_argument("--system", default=None, help="override the system prompt")
+    sp.add_argument(
+        "--prompt-pack",
+        default=DEFAULT_PROMPT_PACK_ID,
+        help=f"versioned prompt pack (default: {DEFAULT_PROMPT_PACK_ID})",
+    )
+    system = sp.add_mutually_exclusive_group()
+    system.add_argument("--system", default=None, help="override the system prompt inline")
+    system.add_argument(
+        "--system-prompt-file",
+        help="UTF-8 file replacing the selected pack's system prompt",
+    )
+    sp.add_argument(
+        "--run-prompt-file",
+        help="UTF-8 template replacing the selected pack's run template; must include {prompt}",
+    )
     sp.add_argument("--max-turns", type=int, default=30)
     sp.add_argument("--compaction-tokens", type=int, default=100_000,
                     help="rough token tripwire for context compaction")
@@ -68,10 +90,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true", help="emit the result as JSON on stdout")
     sp.add_argument("--quiet", action="store_true", help="no turn-by-turn narration on stderr")
 
+    sp = sub.add_parser("prompts", help="list or inspect versioned prompt packs")
+    sp.add_argument("--pack", help="show one prompt pack in full")
+    sp.add_argument("--json", action="store_true", help="emit the selected pack as JSON")
+
     sp = sub.add_parser("sessions", help="list saved sessions")
     sp.add_argument("--root", default=None, help="session store root (default: $PINNACE_HOME or ~/.pinnace)")
 
-    sp = sub.add_parser("tools", help="list the built-in tools")
+    sub.add_parser("tools", help="list the built-in tools")
 
     return p
 
@@ -81,12 +107,20 @@ def cmd_run(args) -> int:
     if args.prompt_file:
         with open(args.prompt_file, encoding="utf-8") as f:
             prompt = f.read()
+    pack = load_prompt_pack(
+        args.prompt_pack,
+        system_prompt_file=args.system_prompt_file,
+        run_prompt_file=args.run_prompt_file,
+    )
+    rendered_prompt = pack.render(prompt)
+    system_prompt = args.system if args.system is not None else pack.system_prompt
+
     sandbox = _make_sandbox(args)
     try:
         config = AgentConfig.resolve(
             model=args.model,
             sandbox=sandbox,
-            system_prompt=DEFAULT_SYSTEM if args.system is None else args.system,
+            system_prompt=system_prompt,
             max_turns=args.max_turns,
             compaction_tokens=args.compaction_tokens,
             session_id=args.session,
@@ -98,7 +132,7 @@ def cmd_run(args) -> int:
         _log(f"error: {e}")
         return 1
     try:
-        result = agent.run(prompt)
+        result = agent.run(rendered_prompt)
     finally:
         sandbox.close()
     if args.json:
@@ -110,6 +144,32 @@ def cmd_run(args) -> int:
             print(result.final)
         _log(f"[pinnace] done in {result.turns} turns"
              + (f", compacted {result.compacted}x" if result.compacted else ""))
+    return 0
+
+
+def cmd_prompts(args) -> int:
+    if not args.pack:
+        for pack in available_prompt_packs():
+            suffix = " (default)" if pack.identifier == DEFAULT_PROMPT_PACK_ID else ""
+            print(f"{pack.identifier}{suffix}")
+        return 0
+
+    pack = get_prompt_pack(args.pack)
+    payload = {
+        "id": pack.identifier,
+        "name": pack.name,
+        "version": pack.version,
+        "system_prompt": pack.system_prompt,
+        "run_prompt_template": pack.run_prompt_template,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"id: {pack.identifier}")
+        print("\n[system_prompt]")
+        print(pack.system_prompt)
+        print("\n[run_prompt_template]")
+        print(pack.run_prompt_template)
     return 0
 
 
@@ -133,13 +193,21 @@ def cmd_tools(args) -> int:
     return 0
 
 
-_DISPATCH = {"run": cmd_run, "sessions": cmd_sessions, "tools": cmd_tools}
+_DISPATCH = {
+    "run": cmd_run,
+    "prompts": cmd_prompts,
+    "sessions": cmd_sessions,
+    "tools": cmd_tools,
+}
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return _DISPATCH[args.cmd](args)
+    except PromptError as e:
+        _log(f"error: {e}")
+        return 2
     except KeyboardInterrupt:
         return 130
 

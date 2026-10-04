@@ -48,6 +48,12 @@ pinnace run --prompt "audit this repo for hardcoded secrets" --json > result.jso
 # prompt from a file, custom system prompt, no sandbox network
 pinnace run --prompt-file task.md --system "you are a terse auditor" --no-net
 
+# inspect the exact versioned prompts, then override either template from UTF-8 files
+pinnace prompts
+pinnace prompts --pack general-v1 --json
+pinnace run --prompt "audit this repo" \
+  --system-prompt-file system.txt --run-prompt-file task-template.txt
+
 # no docker on this box (dev only — runs model-generated commands on YOUR machine)
 pinnace run --prompt "list files" --sandbox local --unsafe-ok
 

@@ -98,3 +98,21 @@ pinnace tools
 - Tests must run with no API keys and no Docker (scripted fake models, LocalSandbox).
 - Builder-to-builder voice in docs: direct, technical, no buzzwords.
 - Work on `vector/dev-<topic>` branches. Commit locally. NEVER push.
+
+## Prompt packs
+
+`PromptPack` is an immutable, versioned pair of `system_prompt` and
+`run_prompt_template`. The run template must contain `{prompt}`; rendering
+replaces only that token, so braces in operator input or JSON examples remain
+literal. `get_prompt_pack()` resolves the current built-in default
+(`general-v1`), `available_prompt_packs()` lists built-ins, and
+`load_prompt_pack()` applies optional UTF-8 system/run text-file overrides.
+Override identifiers include `+system` and/or `+run` so result provenance stays
+visible.
+
+Use `pinnace prompts` to list packs and
+`pinnace prompts --pack general-v1 [--json]` to inspect the complete prompts.
+`pinnace run` accepts `--prompt-pack`, `--system-prompt-file`, and
+`--run-prompt-file`; an explicit `--system` remains supported and takes the
+inline system text. Invalid packs or override files fail before a sandbox is
+started.

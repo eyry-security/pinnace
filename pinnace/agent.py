@@ -358,8 +358,11 @@ class PinnaceAgent:
                     self._say(f"[pinnace] tool: {name}({str(args)[:120]})")
                     try:
                         out = str(tool.invoke(args))
+                        out_preview = out[:500].replace(chr(10), " ")
+                        self._say(f"[pinnace] tool-result: {name} -> {out_preview}")
                     except Exception as e:  # noqa: BLE001 - the model should see failures
                         out = f"error: {e}"
+                        self._say(f"[pinnace] tool-result: {name} -> error: {e}")
                 messages.append(ToolMessage(content=out, tool_call_id=call_id, name=name))
                 payload = parse_finish(out)
                 if payload is not None:

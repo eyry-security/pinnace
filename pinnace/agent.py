@@ -19,6 +19,7 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import BaseTool
 
+from .catalog import DEEPSEEK_API_KEY_ENV, DEEPSEEK_BASE_URL
 from .compaction import compact_messages, estimate_tokens, needs_compaction
 from .config import AgentConfig, DEFAULT_MODEL, DEFAULT_SYSTEM
 from .sandbox import DockerSandbox, Sandbox, SandboxError
@@ -72,7 +73,8 @@ def extract_thinking(resp: AIMessage) -> str:
 def _make_model(model_ref: str, thinking: bool = False):
     """Build a chat model from a "provider:model" ref via init_chat_model.
 
-    When thinking=True and the provider supports it (currently anthropic),
+    DeepSeek refs use the OpenAI-compatible path with the DeepSeek base URL and
+    key. When thinking=True and the provider supports it (currently anthropic),
     the model's extended-thinking mode is enabled so run() can surface the
     reasoning in the narration. Other providers ignore the flag.
     """
@@ -89,11 +91,22 @@ def _make_model(model_ref: str, thinking: bool = False):
         raise PinnaceError(
             f"bad model ref {model_ref!r}: want 'provider:model', e.g. 'anthropic:claude-opus-4-6'"
         )
+    provider_key = provider.lower()
+    chat_provider = provider
     kwargs: dict = {}
-    if thinking and provider == "anthropic":
+    if provider_key == "deepseek":
+        api_key = os.environ.get(DEEPSEEK_API_KEY_ENV)
+        if not api_key:
+            raise PinnaceError(
+                f"deepseek models need {DEEPSEEK_API_KEY_ENV} in the environment"
+            )
+        chat_provider = "openai"
+        kwargs["base_url"] = DEEPSEEK_BASE_URL
+        kwargs["api_key"] = api_key
+    elif thinking and provider_key == "anthropic":
         kwargs["thinking"] = {"type": "enabled", "budget_tokens": THINKING_BUDGET_TOKENS}
         kwargs["max_tokens"] = THINKING_MAX_TOKENS
-    return init_chat_model(name, model_provider=provider, **kwargs)
+    return init_chat_model(name, model_provider=chat_provider, **kwargs)
 
 
 def _model_reference(model) -> str | None:

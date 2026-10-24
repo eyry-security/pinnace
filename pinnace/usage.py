@@ -93,29 +93,13 @@ class CostBasis:
         }
 
 
-# Snapshot of the published direct-provider rates. The complete basis is copied
-# into every record so historical charges do not depend on a mutable table.
-_OPUS_46_DIRECT = CostBasis(
-    input_per_million="5",
-    output_per_million="25",
-    cache_read_per_million="0.50",
-    cache_write_5m_per_million="6.25",
-    cache_write_1h_per_million="10",
-    source="provider-published",
-    effective_date="2026-10-04",
-)
-
-
 def default_cost_basis(model_ref: str | None) -> CostBasis | None:
     """Return a built-in basis only for an exact, known provider/model pair."""
-    if not model_ref:
-        return None
-    provider, separator, model = model_ref.lower().partition(":")
-    if separator and provider == "anthropic" and (
-        model == "claude-opus-4-6" or model.startswith("claude-opus-4-6-")
-    ):
-        return _OPUS_46_DIRECT
-    return None
+    # Imported lazily so the catalog can depend on CostBasis without a cycle.
+    from .catalog import get_model_spec
+
+    spec = get_model_spec(model_ref)
+    return spec.cost_basis if spec is not None else None
 
 
 @dataclass(frozen=True)

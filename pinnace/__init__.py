@@ -13,6 +13,7 @@ from .prompts import (
 )
 from .sandbox import DockerSandbox, ExecResult, LocalSandbox, Sandbox, SandboxError
 from .session import SessionStore
+from .target_guard import TargetBinding, extract_hosts, guard_tool_call
 from .tools import builtin_tools
 from .usage import CostBasis, TokenUsage, UsageMeter, UsageMeterError
 
@@ -36,11 +37,14 @@ __all__ = [
     "Sandbox",
     "SandboxError",
     "SessionStore",
+    "TargetBinding",
     "available_prompt_packs",
     "TokenUsage",
     "UsageMeter",
     "UsageMeterError",
     "builtin_tools",
+    "extract_hosts",
     "get_prompt_pack",
+    "guard_tool_call",
     "load_prompt_pack",
 ]

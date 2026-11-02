@@ -23,6 +23,7 @@ from .catalog import DEEPSEEK_API_KEY_ENV, DEEPSEEK_BASE_URL
 from .compaction import compact_messages, estimate_tokens, needs_compaction
 from .config import AgentConfig, DEFAULT_MODEL, DEFAULT_SYSTEM
 from .sandbox import DockerSandbox, Sandbox, SandboxError
+from .target_guard import TargetBinding, guard_tool_call
 from .session import SessionStore
 from .tools import FINISH_PREFIX, builtin_tools, parse_finish
 from .usage import CostBasis, UsageMeter, response_model
@@ -211,6 +212,7 @@ class PinnaceAgent:
         customer_id: str | None = None,
         thinking: bool = False,
         prompt_caching: bool = True,
+        target_binding: TargetBinding | None = None,
     ) -> None:
         if model is None:
             model = AgentConfig.resolve().model
@@ -218,6 +220,7 @@ class PinnaceAgent:
         self.thinking = thinking
         self.model = _make_model(model, thinking=thinking) if isinstance(model, str) else model
         self.prompt_caching = prompt_caching
+        self.target_binding = target_binding
         self._cache_system = prompt_caching and _supports_prompt_caching(self.model)
         if sandbox is None:
             try:
@@ -365,12 +368,19 @@ class PinnaceAgent:
                 call_id = call.get("id", "")
                 args = call.get("args", {}) or {}
                 tool = self._tools_by_name.get(name)
-                if tool is None:
+                reason = guard_tool_call(self.target_binding, name, args)
+                if reason:
+                    out = reason
+                    self._say(f"[pinnace] target-rejected: {name}: {reason}")
+                elif tool is None:
                     out = f"error: unknown tool {name!r}"
                 else:
                     self._say(f"[pinnace] tool: {name}({str(args)[:120]})")
                     try:
-                        out = str(tool.invoke(args))
+                        result = tool.invoke(args)
+                        if self.target_binding is not None and name != "finish":
+                            result = self.target_binding.filter_result(result)
+                        out = str(result)
                         out_preview = out[:500].replace(chr(10), " ")
                         self._say(f"[pinnace] tool-result: {name} -> {out_preview}")
                     except Exception as e:  # noqa: BLE001 - the model should see failures

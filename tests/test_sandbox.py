@@ -93,3 +93,64 @@ def test_docker_exec_none_stream_values():
     r = _docker_sb((None, b"oops\n")).exec("echo hello")
     assert r.stdout == ""
     assert r.stderr.strip() == "oops"
+
+
+def test_docker_sandbox_sets_memory_and_cpu_caps(monkeypatch):
+    import sys
+    import types
+
+    from pinnace.sandbox import DockerSandbox
+
+    calls = []
+
+    class Containers:
+        def run(self, **kwargs):
+            calls.append(kwargs)
+            return object()
+
+    class Client:
+        containers = Containers()
+
+        def ping(self):
+            return True
+
+    monkeypatch.setitem(
+        sys.modules, "docker", types.SimpleNamespace(from_env=lambda: Client()))
+    monkeypatch.delenv("PINNACE_SANDBOX_MEMORY", raising=False)
+    monkeypatch.delenv("PINNACE_SANDBOX_CPUS", raising=False)
+
+    DockerSandbox(image="test-image")
+
+    assert calls
+    assert calls[0]["mem_limit"] == "1g"
+    assert calls[0]["nano_cpus"] == 1_000_000_000
+
+
+def test_docker_sandbox_caps_are_env_configurable(monkeypatch):
+    import sys
+    import types
+
+    from pinnace.sandbox import DockerSandbox
+
+    calls = []
+
+    class Containers:
+        def run(self, **kwargs):
+            calls.append(kwargs)
+            return object()
+
+    class Client:
+        containers = Containers()
+
+        def ping(self):
+            return True
+
+    monkeypatch.setitem(
+        sys.modules, "docker", types.SimpleNamespace(from_env=lambda: Client()))
+    monkeypatch.setenv("PINNACE_SANDBOX_MEMORY", "512m")
+    monkeypatch.setenv("PINNACE_SANDBOX_CPUS", "0.5")
+
+    DockerSandbox(image="test-image")
+
+    assert calls[0]["mem_limit"] == "512m"
+    assert calls[0]["nano_cpus"] == 500_000_000

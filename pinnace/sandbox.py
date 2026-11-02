@@ -19,6 +19,31 @@ from dataclasses import dataclass
 # Cap tool output so one chatty command can't eat the context window.
 MAX_OUTPUT_CHARS = 200_000
 
+# Resource defaults for every sandbox container. Overridable per instance or
+# through the environment so production can tune without a code change.
+SANDBOX_MEMORY_ENV = "PINNACE_SANDBOX_MEMORY"
+SANDBOX_CPUS_ENV = "PINNACE_SANDBOX_CPUS"
+DEFAULT_SANDBOX_MEMORY = "1g"
+DEFAULT_SANDBOX_CPUS = "1"
+
+
+def _env_value(name: str, default: str) -> str:
+    return (os.environ.get(name) or "").strip() or default
+
+
+def _nano_cpus(value) -> int:
+    """Convert a CPU count (e.g. "1", "1.5") to Docker nano_cpus."""
+    text = str(value if value is not None else "").strip()
+    if not text:
+        text = _env_value(SANDBOX_CPUS_ENV, DEFAULT_SANDBOX_CPUS)
+    try:
+        count = float(text)
+    except (TypeError, ValueError) as exc:
+        raise SandboxError(f"invalid CPU limit {text!r}") from exc
+    if count <= 0:
+        raise SandboxError(f"CPU limit must be positive, got {text!r}")
+    return max(1, int(count * 1_000_000_000))
+
 
 class SandboxError(RuntimeError):
     """Raised when a sandbox can't do what was asked."""
@@ -78,7 +103,8 @@ class DockerSandbox(Sandbox):
         image: str = "python:3.12-slim",
         workdir: str = "/work",
         network: str | None = None,
-        mem_limit: str = "1g",
+        mem_limit: str | None = None,
+        cpus: str | None = None,
     ) -> None:
         try:
             import docker
@@ -90,12 +116,16 @@ class DockerSandbox(Sandbox):
         except Exception as e:
             raise SandboxError(f"docker daemon not reachable: {e}") from e
         self.workdir = workdir
+        self.mem_limit = (str(mem_limit).strip() if mem_limit else
+                          _env_value(SANDBOX_MEMORY_ENV,
+                                     DEFAULT_SANDBOX_MEMORY))
         run_kwargs: dict = {
             "image": image,
             "command": "sleep infinity",
             "detach": True,
             "working_dir": workdir,
-            "mem_limit": mem_limit,
+            "mem_limit": self.mem_limit,
+            "nano_cpus": _nano_cpus(cpus),
             "stdin_open": True,
         }
         if network is not None:
